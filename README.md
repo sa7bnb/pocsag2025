@@ -31,7 +31,12 @@ Installera följande verktyg på din Raspberry Pi på ny PI-OS installation: (ja
 sudo apt update && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
 
 Cd pocsag2025
+
 Kör chmod +x server.py på din fil, 
+
+sudo chown sa7bnb:sa7bnb config.json messages.txt filtered.messages.txt
+
+chmod 644 config.json messages.txt filtered.messages.txt
 
 sudo crontab -e
 
