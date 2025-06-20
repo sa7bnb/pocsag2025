@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import subprocess
-import threading
-import json
 import os
-import smtplib
 import re
+import json
+import threading
+import subprocess
+import smtplib
 from flask import Flask, render_template_string, request, redirect, jsonify
 from email.message import EmailMessage
 from datetime import datetime
 from pyproj import Transformer
 
-# --- Konstanter ---
-CONFIG_FILE = "config.json"
-LOG_FILE_ALL = "messages.txt"
-LOG_FILE_FILTERED = "filtered.messages.txt"
+# --- Absoluta sökvägar ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+LOG_FILE_ALL = os.path.join(BASE_DIR, "messages.txt")
+LOG_FILE_FILTERED = os.path.join(BASE_DIR, "filtered.messages.txt")
 
-# --- Flask-init ---
+# --- Flask-app ---
 app = Flask(__name__)
 decoded_messages = []
 filtered_messages = []
@@ -24,51 +25,9 @@ decoder_proc = None
 rtl_proc = None
 message_counter = 0
 last_message_hash = ""
-auto_update = True
 
-# --- Transformer: RT90 -> WGS84 ---
+# --- Transformer RT90 -> WGS84 ---
 transformer = Transformer.from_crs("EPSG:3021", "EPSG:4326", always_xy=True)
-
-# --- Koordinatkonvertering ---
-def rt90_to_wgs84(x: int, y: int):
-    lon, lat = transformer.transform(y, x)
-    return round(lat, 6), round(lon, 6)
-
-# --- Skicka e-post ---
-def send_email(subject):
-    try:
-        if not email_settings.get("ENABLED", True):
-            print("E-post är avstängd.")
-            return
-
-        msg = EmailMessage()
-        msg['Subject'] = subject
-        msg['From'] = email_settings.get("SENDER")
-        msg['To'] = email_settings.get("RECEIVER")
-
-        map_link = ""
-        match = re.search(r'X=(\d+)\s+Y=(\d+)', subject)
-        if match:
-            x = int(match.group(1))
-            y = int(match.group(2))
-            lat, lon = rt90_to_wgs84(x, y)
-            print(f"RT90 → WGS84: X={x}, Y={y} → lat={lat}, lon={lon}")
-            map_link = (
-                f"\nKarta: https://www.openstreetmap.org/?mlat={lat:.6f}&mlon={lon:.6f}"
-                f"#map=15/{lat:.6f}/{lon:.6f}"
-            )
-        else:
-            print("Inga koordinater hittades i meddelandet.")
-
-        msg.set_content(f"Nytt POCSAG-meddelande:\n\n{subject}{map_link}")
-
-        with smtplib.SMTP_SSL(email_settings.get("SMTP_SERVER"), int(email_settings.get("SMTP_PORT"))) as smtp:
-            smtp.login(email_settings.get("SENDER"), email_settings.get("APP_PASSWORD"))
-            smtp.send_message(msg)
-        print("E-post skickad.")
-
-    except Exception as e:
-        print(f"E-postfel: {e}")
 
 # --- HTML-mallar ---
 main_html = """
@@ -76,7 +35,7 @@ main_html = """
 <html>
 <head>
   <meta charset="utf-8">
-  <title>POCSAG 2025 - © A Isaksson 2025</title>
+  <title>POCSAG 2025 - © A Isaksson</title>
   <style>
     body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f0f0; padding: 20px; }
     h1, h2 { color: #333; }
@@ -197,8 +156,8 @@ email_html = """
 </html>
 """
 
-# --- Konfig ---
-def load_config():
+# --- Konfiguration ---
+def load_or_create_config():
     if not os.path.isfile(CONFIG_FILE):
         default = {
             "frequency": "148.5625M",
@@ -212,62 +171,106 @@ def load_config():
                 "ENABLED": True
             }
         }
-        save_config(default)
-    with open(CONFIG_FILE, "r") as f:
-        return json.load(f)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(default, f, indent=2)
+        print("config.json skapad med standardvärden.")
+        return default
+    else:
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
 
 def save_config(config):
     with open(CONFIG_FILE, "w") as f:
         json.dump(config, f, indent=2)
 
-# --- Decoder ---
+config = load_or_create_config()
+current_freq = config.get("frequency", "148.5625M")
+filter_addresses = set(config.get("filters", []))
+email_settings = config.get("email", {})
+
+# --- Koordinatkonvertering ---
+def rt90_to_wgs84(x, y):
+    lon, lat = transformer.transform(y, x)
+    return round(lat, 6), round(lon, 6)
+
+# --- E-postfunktion ---
+def send_email(subject):
+    try:
+        if not email_settings.get("ENABLED", True):
+            return
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = email_settings.get("SENDER")
+        msg['To'] = email_settings.get("RECEIVER")
+        map_link = ""
+
+        match = re.search(r'X=(\d+)\s+Y=(\d+)', subject)
+        if match:
+            x = int(match.group(1))
+            y = int(match.group(2))
+            lat, lon = rt90_to_wgs84(x, y)
+            map_link = (
+                f"\nKarta: https://www.openstreetmap.org/?mlat={lat}&mlon={lon}"
+                f"#map=15/{lat}/{lon}"
+            )
+
+        msg.set_content(f"Nytt POCSAG-meddelande:\n\n{subject}{map_link}")
+        with smtplib.SMTP_SSL(email_settings.get("SMTP_SERVER"), int(email_settings.get("SMTP_PORT"))) as smtp:
+            smtp.login(email_settings.get("SENDER"), email_settings.get("APP_PASSWORD"))
+            smtp.send_message(msg)
+    except Exception as e:
+        print(f"E-postfel: {e}")
+
+# --- Starta decoder ---
 def start_decoder(freq):
     global decoder_proc, rtl_proc
     stop_decoder()
-
-    cmd = ["rtl_fm", "-f", freq, "-M", "fm", "-s", "22050", "-g", "42"]
-    multimon_cmd = ["multimon-ng", "-t", "raw", "-C", "SE", "-a", "POCSAG512", "-a", "POCSAG1200", "-f", "alpha", "-"]
-
-    rtl_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    decoder_proc = subprocess.Popen(multimon_cmd, stdin=rtl_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        rtl_proc = subprocess.Popen(["rtl_fm", "-f", freq, "-M", "fm", "-s", "22050", "-g", "42", "p", "36"], stdout=subprocess.PIPE)
+        decoder_proc = subprocess.Popen(["multimon-ng", "-t", "raw", "-C", "SE", "-a", "POCSAG512", "-a", "POCSAG1200", "-f", "alpha", "-"],
+                                        stdin=rtl_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except FileNotFoundError as e:
+        print(f"Fel: {e}")
+        return
 
     def read_loop():
-        global decoded_messages, filtered_messages, message_counter, last_message_hash
+        global message_counter, last_message_hash
         for line in decoder_proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-            tagged_line = f"{timestamp} {line}"
-            if tagged_line == last_message_hash:
-                continue
-            last_message_hash = tagged_line
-            decoded_messages.append(tagged_line)
-            with open(LOG_FILE_ALL, "a", encoding="utf-8") as f:
-                f.write(tagged_line + "\n")
-            match = re.search(r'Address:\s*(\d+)', line)
-            if match:
-                address = match.group(1)
-                if address in filter_addresses:
-                    filtered_messages.append(tagged_line)
+            try:
+                line = line.strip()
+                if not line:
+                    continue
+                line = line.encode("latin1").decode("utf-8", errors="replace")
+                timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
+                full_line = f"{timestamp} {line}"
+                if full_line == last_message_hash:
+                    continue
+                last_message_hash = full_line
+                decoded_messages.append(full_line)
+                with open(LOG_FILE_ALL, "a", encoding="utf-8") as f:
+                    f.write(full_line + "\n")
+                match = re.search(r'Address:\s*(\d+)', line)
+                if match and match.group(1) in filter_addresses:
+                    filtered_messages.append(full_line)
                     with open(LOG_FILE_FILTERED, "a", encoding="utf-8") as f:
-                        f.write(tagged_line + "\n")
-                    if "Alpha:" in line and email_settings.get("ENABLED", False):
+                        f.write(full_line + "\n")
+                    if "Alpha:" in line:
                         alpha_text = line.split("Alpha:", 1)[1].strip()
                         send_email(f"{timestamp} {alpha_text}")
-            decoded_messages[:] = decoded_messages[-50:]
-            filtered_messages[:] = filtered_messages[-50:]
-            message_counter += 1
+                decoded_messages[:] = decoded_messages[-50:]
+                filtered_messages[:] = filtered_messages[-50:]
+                message_counter += 1
+            except Exception as e:
+                print(f"Fel i avkodning: {e}")
+
     threading.Thread(target=read_loop, daemon=True).start()
 
 def stop_decoder():
     global decoder_proc, rtl_proc
-    try:
-        if decoder_proc: decoder_proc.kill()
-        if rtl_proc: rtl_proc.kill()
-    except: pass
+    if decoder_proc: decoder_proc.kill()
+    if rtl_proc: rtl_proc.kill()
 
-# --- Flask Routes ---
+# --- Flask routes ---
 @app.route("/")
 def index():
     filters_display = "\n".join(filter_addresses)
@@ -276,9 +279,9 @@ def index():
 @app.route("/setfreq", methods=["POST"])
 def setfreq():
     global current_freq, config
-    raw_freq = request.form.get("freq", "").strip()
-    if raw_freq:
-        current_freq = raw_freq + "M"
+    freq = request.form.get("freq", "").strip()
+    if freq:
+        current_freq = freq + "M"
         config["frequency"] = current_freq
         save_config(config)
         start_decoder(current_freq)
@@ -286,18 +289,16 @@ def setfreq():
 
 @app.route("/setfilters", methods=["POST"])
 def setfilters():
-    global filter_addresses, config, filtered_messages
+    global filter_addresses, config
     filter_str = request.form.get("filters", "")
-    filter_list = [f.strip() for f in filter_str.replace(",", "\n").splitlines() if f.strip()]
-    filter_addresses = set(filter_list)
+    filters = [f.strip() for f in filter_str.replace(",", "\n").splitlines() if f.strip()]
+    filter_addresses = set(filters)
     config["filters"] = list(filter_addresses)
     save_config(config)
-    filtered_messages = []
-    start_decoder(current_freq)
     return redirect("/")
 
-@app.route("/messages", methods=["GET"])
-def get_messages():
+@app.route("/messages")
+def messages():
     return jsonify({
         "counter": message_counter,
         "filtered": filtered_messages,
@@ -318,31 +319,26 @@ def email_page():
 @app.route("/save_email", methods=["POST"])
 def save_email():
     global email_settings
-    enabled_str = request.form.get("ENABLED", "true").lower()
     email_settings = {
         "SMTP_SERVER": request.form.get("SMTP_SERVER", ""),
         "SMTP_PORT": request.form.get("SMTP_PORT", ""),
         "SENDER": request.form.get("SENDER", ""),
         "APP_PASSWORD": request.form.get("APP_PASSWORD", ""),
         "RECEIVER": request.form.get("RECEIVER", ""),
-        "ENABLED": enabled_str == "true"
+        "ENABLED": request.form.get("ENABLED", "true") == "true"
     }
     config["email"] = email_settings
     save_config(config)
-    return redirect("/")
+    return redirect("/email")
 
 @app.route("/send_test_email", methods=["POST"])
 def send_test_email():
-    test_msg = "2025-01-01 12:00:00 TEST Vägen 11 Rosenfors H7300 X=6359960 Y=1502061"
+    test_msg = "TEST Vägen 11 Rosenfors H7300 X=6359960 Y=1502061"
     send_email(test_msg)
     return redirect("/email")
 
 # --- Start ---
 if __name__ == "__main__":
-    config = load_config()
-    current_freq = config.get("frequency", "161.4375M")
-    filter_addresses = set(config.get("filters", []))
-    email_settings = config.get("email", {})
-    print(f"Startar POCSAG-avkodare på frekvens {current_freq}")
+    print(f"Startar POCSAG på {current_freq}")
     start_decoder(current_freq)
     app.run(host="0.0.0.0", port=5000)
