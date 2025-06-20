@@ -30,10 +30,10 @@ git clone https://github.com/sa7bnb/pocsag2025.git
 Installera följande verktyg på din Raspberry Pi på ny PI-OS installation: (jag använder Pi4 med Raspberry PI OS Lite 32bit)
 sudo apt update && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
 
+Kör chmod +x server.py på din fil, 
 
-git clone https://github.com/sa7bnb/pocsag2025.git
+sudo crontab -e
 
-Kör chmod +x server.py på din fil, sudo crontab -e
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
 
 🖥️ Användning
