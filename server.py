@@ -76,7 +76,7 @@ main_html = """
 <html>
 <head>
   <meta charset="utf-8">
-  <title>POCSAG 2025</title>
+  <title>POCSAG 2025 - © A Isaksson 2025</title>
   <style>
     body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f0f0; padding: 20px; }
     h1, h2 { color: #333; }
@@ -340,7 +340,7 @@ def send_test_email():
 # --- Start ---
 if __name__ == "__main__":
     config = load_config()
-    current_freq = config.get("frequency", "148.5625M")
+    current_freq = config.get("frequency", "161.4375M")
     filter_addresses = set(config.get("filters", []))
     email_settings = config.get("email", {})
     print(f"Startar POCSAG-avkodare på frekvens {current_freq}")
