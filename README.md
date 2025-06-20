@@ -4,19 +4,28 @@ POCSAG 2025 är ett Python-baserat program för Raspberry Pi (eller annan Linux-
 🔧 Funktioner
 ✅ Stöd för flera POCSAG-hastigheter: 512 och 1200 baud.
 📬 Filtrering av meddelanden via RIC-adresser.
+
 ✉️ Automatisk e-postavisering vid nya filtrerade meddelanden, inklusive kartlänk om RT90-koordinater finns.
+
 🌍 Konverterar RT90-koordinater till WGS84 med pyproj och skapar klickbara kartlänkar till OpenStreetMap.
+
 💻 Modern webgränssnitt med inställningsformulär för frekvens, filter och e-post.
+
 🔄 Auto-uppdatering av meddelandelistor var 10:e sekund via JavaScript.
+
 🛠️ Enkel konfiguration via config.json – ändras automatiskt via webbgränssnittet.
+
 🧰 Förutsättningar
 
 Installera följande verktyg på din Raspberry Pi:
+
 sudo apt update && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
 
 🖥️ Användning
 Starta programmet med:
 python3 server.py, editera frekvens och ric
+Eller kör chmod +x server.py på din fil, sudo crontab -e
+@reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/server.py
 
 Öppna sedan webbläsaren och navigera till:
 http://<din-Raspberry-IP>:5000
