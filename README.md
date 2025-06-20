@@ -34,12 +34,6 @@ Cd pocsag2025
 
 Kör chmod +x server.py på din fil, 
 
-sudo chown sa7bnb:sa7bnb config.json messages.txt filtered.messages.txt
-
-chmod 644 config.json messages.txt filtered.messages.txt
-
-chmod -R a+rw /home/sa7bnb/pocsag2025
-
 sudo crontab -e
 
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
