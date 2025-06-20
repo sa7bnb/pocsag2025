@@ -66,3 +66,6 @@ RT90-koordinater i meddelanden omvandlas till WGS84 och länkas till OpenStreetM
 E-postinställningar görs direkt via webbgränssnittet.
 Stöd för Gmail (via SMTP med app-lösenord).
 E-post innehåller kartlänk om koordinater finns i meddelandet (t.ex. X=6359960 Y=1502061).
+
+// Anders Isaksson - SA7BNB
+// hamradio@sa7bnb.se
