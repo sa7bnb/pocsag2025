@@ -5,7 +5,7 @@ POCSAG 2025 är ett Python-baserat program för Raspberry Pi (eller annan Linux-
 
 ✅ Stöd för flera POCSAG-hastigheter: 512 och 1200 baud.
 
-📬 Filtrering av meddelanden via RIC-adresser.
+📬 Filtrering av meddelanden via RIC-adresser.  
 
 ✉️ Automatisk e-postavisering vid nya filtrerade meddelanden, inklusive kartlänk om RT90-koordinater finns.
 
