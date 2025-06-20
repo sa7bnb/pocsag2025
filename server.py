@@ -6,7 +6,7 @@ import json
 import threading
 import subprocess
 import smtplib
-from flask import Flask, render_template_string, request, redirect, jsonify
+from flask import Flask, render_template_string, request, redirect, jsonify, send_file
 from email.message import EmailMessage
 from datetime import datetime
 from pyproj import Transformer
@@ -17,7 +17,7 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 LOG_FILE_ALL = os.path.join(BASE_DIR, "messages.txt")
 LOG_FILE_FILTERED = os.path.join(BASE_DIR, "filtered.messages.txt")
 
-# --- Flask app ---
+# --- Flask-app och globala variabler ---
 app = Flask(__name__)
 decoded_messages = []
 filtered_messages = []
@@ -26,62 +26,136 @@ rtl_proc = None
 message_counter = 0
 last_message_hash = ""
 
-# --- RT90 till WGS84 ---
+# --- RT90 till WGS84 transformer ---
 transformer = Transformer.from_crs("EPSG:3021", "EPSG:4326", always_xy=True)
 
-# --- HTML-mallar (main_html + email_html) ---
-main_html = """<!doctype html><html><head><meta charset="utf-8">
-<title>POCSAG 2025 - © A Isaksson</title>
-<style>
-body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f0f0; padding: 20px; }
-form { background: #fff; padding: 15px; margin-bottom: 20px; border-radius: 8px; }
-input, textarea, select { width: 100%; padding: 8px; margin: 6px 0 12px; border-radius: 4px; border: 1px solid #ccc; }
-button { background-color: #0078d7; color: white; padding: 10px 18px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
-button:hover { background-color: #005ea6; }
-.message { font-family: monospace; background: #fff; padding: 10px; border-radius: 4px; margin-bottom: 5px; }
-</style></head><body>
+# --- HTML-mallar ---
+main_html = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>POCSAG 2025 - © A Isaksson</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f0f0; padding: 20px; }
+    h1, h2 { color: #333; }
+    form { margin-bottom: 20px; background: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+    input[type=text], textarea, select {
+      width: 100%; padding: 8px; margin-top: 6px; margin-bottom: 12px;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    button {
+      background-color: #0078d7; color: white; padding: 10px 18px;
+      border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+    }
+    button:hover { background-color: #005ea6; }
+    .message {
+      font-family: monospace; background: #fff; padding: 10px;
+      border-radius: 4px; margin-bottom: 5px;
+      box-shadow: 0 0 3px rgba(0,0,0,0.05);
+    }
+  </style>
+</head>
+<body>
 <h1>POCSAG 2025</h1>
-<form method="POST" action="/setfreq"><label>Frekvens (MHz):</label>
-<input type="text" name="freq" value="{{ freq[:-1] }}"><button type="submit">Sätt Frekvens</button></form>
-<form method="GET" action="/email"><button type="submit">E-postinställningar</button></form>
-<form method="POST" action="/setfilters"><label>Filteradresser (RIC):</label><textarea name="filters" rows="3">{{ filters }}</textarea>
-<button type="submit">Uppdatera Filter</button></form>
-<h2>Filtrerade Meddelanden</h2><div id="filtered-messages">{% for msg in filtered %}<div class="message">{{ msg }}</div>{% endfor %}</div>
-<h2>Alla Meddelanden</h2><div id="all-messages">{% for msg in messages %}<div class="message">{{ msg }}</div>{% endfor %}</div>
+
+<form method="POST" action="/setfreq">
+  <label>Frekvens (MHz):</label>
+  <input type="text" name="freq" value="{{ freq[:-1] }}">
+  <button type="submit">Sätt Frekvens</button>
+</form>
+
+<form method="GET" action="/email">
+  <button type="submit">E-postinställningar</button>
+</form>
+
+<form method="POST" action="/setfilters">
+  <label>Filteradresser (RIC):</label><br>
+  <textarea name="filters" rows="3" placeholder="Ex: 123456">{{ filters }}</textarea><br>
+  <button type="submit">Uppdatera Filter</button>
+</form>
+
+<h2>Loggfiler</h2>
+<form method="GET" action="/download/messages">
+  <button type="submit">Ladda ner messages.txt</button>
+</form>
+<form method="GET" action="/download/filtered">
+  <button type="submit">Ladda ner filtered.messages.txt</button>
+</form>
+
+<h2>Filtrerade Meddelanden</h2>
+<div id="filtered-messages">
+{% for msg in filtered %}
+  <div class="message">{{ msg }}</div>
+{% endfor %}
+</div>
+
+<h2>Alla Meddelanden</h2>
+<div id="all-messages">
+{% for msg in messages %}
+  <div class="message">{{ msg }}</div>
+{% endfor %}
+</div>
+
 <script>
-function refreshMessages() {
-  fetch("/messages")
-    .then(response => response.json())
-    .then(data => {
-      document.getElementById("filtered-messages").innerHTML = data.filtered.map(msg => `<div class="message">${msg}</div>`).join('');
-      document.getElementById("all-messages").innerHTML = data.all.map(msg => `<div class="message">${msg}</div>`).join('');
-    });
-}
-setInterval(refreshMessages, 10000);
-</script></body></html>
+  function refreshMessages() {
+    fetch("/messages")
+      .then(response => response.json())
+      .then(data => {
+        const filteredContainer = document.getElementById("filtered-messages");
+        const allContainer = document.getElementById("all-messages");
+
+        filteredContainer.innerHTML = data.filtered.map(msg =>
+          `<div class="message">${msg}</div>`).join('');
+
+        allContainer.innerHTML = data.all.map(msg =>
+          `<div class="message">${msg}</div>`).join('');
+      })
+      .catch(err => console.error("Kunde inte hämta meddelanden:", err));
+  }
+  setInterval(refreshMessages, 10000);
+</script>
+</body>
+</html>
 """
 
-email_html = """<!doctype html><html><head><meta charset="utf-8"><title>E-postinställningar</title>
+email_html = """<!doctype html>
+<html><head><meta charset="utf-8"><title>E-postinställningar</title>
 <style>
-body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f0f0; padding: 20px; }
-form { background: #fff; padding: 15px; max-width: 500px; border-radius: 8px; }
-input, select { width: 100%; padding: 8px; margin: 6px 0 12px; border-radius: 4px; border: 1px solid #ccc; }
-button { background-color: #0078d7; color: white; padding: 10px 18px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
+body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f0f0; padding: 20px; }
+form { background: #ffffff; padding: 15px; border-radius: 8px; max-width: 500px; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+input[type=text], select {
+  width: 100%; padding: 8px; margin-top: 6px; margin-bottom: 12px;
+  border: 1px solid #ccc; border-radius: 4px;
+}
+button {
+  background-color: #0078d7; color: white; padding: 10px 18px;
+  border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+}
 button:hover { background-color: #005ea6; }
 </style></head><body>
 <h2>E-postinställningar</h2>
 <form method="POST" action="/save_email">
-SMTP-server:<input type="text" name="SMTP_SERVER" value="{{ smtp }}">
-SMTP-port:<input type="text" name="SMTP_PORT" value="{{ port }}">
-Avsändare:<input type="text" name="SENDER" value="{{ sender }}">
-App-lösenord:<input type="text" name="APP_PASSWORD" value="{{ apppwd }}">
-Mottagare:<input type="text" name="RECEIVER" value="{{ receiver }}">
-Aktiverad:<select name="ENABLED">
-<option value="true" {% if enabled %}selected{% endif %}>Aktiverad</option>
-<option value="false" {% if not enabled %}selected{% endif %}>Av</option></select>
-<button type="submit">Spara</button></form>
-<form method="POST" action="/send_test_email" style="margin-top:10px;"><button type="submit">Skicka Testmeddelande</button></form>
-<a href="/"><button style="margin-top:10px;">Tillbaka</button></a></body></html>
+  SMTP-server:<br><input type="text" name="SMTP_SERVER" value="{{ smtp }}"><br>
+  SMTP-port:<br><input type="text" name="SMTP_PORT" value="{{ port }}"><br>
+  Avsändaradress:<br><input type="text" name="SENDER" value="{{ sender }}"><br>
+  App-lösenord:<br><input type="text" name="APP_PASSWORD" value="{{ apppwd }}"><br>
+  Mottagaradress:<br><input type="text" name="RECEIVER" value="{{ receiver }}"><br>
+  Aktiverad:<br>
+  <select name="ENABLED">
+    <option value="true" {% if enabled %}selected{% endif %}>Aktiverad</option>
+    <option value="false" {% if not enabled %}selected{% endif %}>Av</option>
+  </select><br>
+  <button type="submit">Spara</button>
+</form>
+
+<form method="POST" action="/send_test_email" style="margin-top: 10px;">
+  <button type="submit">Skicka Testmeddelande</button>
+</form>
+
+<a href="/"><button style="margin-top: 10px;">Tillbaka</button></a>
+</body>
+</html>
 """
 
 # --- Init konfig och logg ---
@@ -89,7 +163,7 @@ def initialize_environment():
     if not os.path.isfile(CONFIG_FILE):
         with open(CONFIG_FILE, "w") as f:
             json.dump({
-                "frequency": "161.5375M",
+                "frequency": "148.5625M",
                 "filters": [],
                 "email": {
                     "SMTP_SERVER": "",
@@ -100,7 +174,7 @@ def initialize_environment():
                     "ENABLED": True
                 }
             }, f, indent=2)
-        print("Skapade config.json med standardvärden.")
+        print("Skapade config.json.")
     for f in [LOG_FILE_ALL, LOG_FILE_FILTERED]:
         if not os.path.isfile(f):
             open(f, "w", encoding="utf-8").close()
@@ -159,14 +233,12 @@ def start_decoder(freq):
         for line in decoder_proc.stdout:
             try:
                 line = line.strip()
-                if not line:
-                    continue
+                if not line: continue
                 line = line.encode("latin1").decode("utf-8", errors="replace")
                 line = clean_line(line)
                 timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
                 full_line = f"{timestamp} {line}"
-                if full_line == last_message_hash:
-                    continue
+                if full_line == last_message_hash: continue
                 last_message_hash = full_line
                 decoded_messages.append(full_line)
                 with open(LOG_FILE_ALL, "a", encoding="utf-8") as f:
@@ -185,7 +257,7 @@ def start_decoder(freq):
                 filtered_messages[:] = filtered_messages[-50:]
                 message_counter += 1
             except Exception as e:
-                print(f"Fel i avkodning: {e}")
+                print(f"Fel i read_loop: {e}")
 
     threading.Thread(target=read_loop, daemon=True).start()
 
@@ -259,7 +331,15 @@ def send_test_email():
     send_email("TEST Vägen 11 Rosenfors H7300 X=6359960 Y=1502061")
     return redirect("/email")
 
-# --- Starta ---
+@app.route("/download/messages")
+def download_messages():
+    return send_file(LOG_FILE_ALL, as_attachment=True, download_name="messages.txt", mimetype="text/plain")
+
+@app.route("/download/filtered")
+def download_filtered():
+    return send_file(LOG_FILE_FILTERED, as_attachment=True, download_name="filtered.messages.txt", mimetype="text/plain")
+
+# --- Kör server ---
 if __name__ == "__main__":
     initialize_environment()
     config = load_config()
