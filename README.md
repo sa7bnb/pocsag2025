@@ -27,6 +27,7 @@ sudo apt update
 sudo apt install git -y
 
 git clone https://github.com/sa7bnb/pocsag2025.git
+
 Kör chmod +x server.py på din fil, sudo crontab -e
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
 
