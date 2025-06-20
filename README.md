@@ -19,7 +19,7 @@ POCSAG 2025 är ett Python-baserat program för Raspberry Pi (eller annan Linux-
 
 🧰 Förutsättningar
 
-Laggar du ner det här ifrån installera git
+Ladda ner och nstallera git
 
 sudo apt update
 
