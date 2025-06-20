@@ -25,7 +25,7 @@ sudo apt update && sudo apt install rtl-sdr multimon-ng python3-pip python3-flas
 Starta programmet med:
 python3 server.py, editera frekvens och ric
 Eller kör chmod +x server.py på din fil, sudo crontab -e
-@reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/server.py
+@reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
 
 Öppna sedan webbläsaren och navigera till:
 http://<din-Raspberry-IP>:5000
