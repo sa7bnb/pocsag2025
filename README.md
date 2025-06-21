@@ -23,15 +23,7 @@ POCSAG 2025 är ett Python-baserat program för Raspberry Pi (eller annan Linux-
 
 Installera följande verktyg på din Raspberry Pi på ny PI-OS installation: (jag använder Pi4 med Raspberry PI OS Lite 32bit)
 
-Ladda ner och installera git
-
-sudo apt update
-
-sudo apt install git -y
-
-git clone https://github.com/sa7bnb/pocsag2025.git
-
-sudo apt update && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
+sudo apt update && sudo apt install git -y && git clone https://github.com/sa7bnb/pocsag2025.git && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
 
 Cd pocsag2025
 
