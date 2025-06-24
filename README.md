@@ -35,7 +35,7 @@ Utvecklad av: SA7BNB - Anders Isaksson
 ### Hårdvara
 - RTL-SDR-dongel (kompatibel med RTL2832U)
 - Lämplig antenn för aktuell frekvens
-- Linux-system (rekommenderat: Raspberry Pi eller Ubuntu)
+- Linux-system med Raspberry Pi
 
 ## Installation
 1. Installera din Raspberry Pi med Raspberry Pi Imager och välj det minimalistiska Raspberry Pi OS Lite (32-bitars).
@@ -51,7 +51,7 @@ Utvecklad av: SA7BNB - Anders Isaksson
 ### Frekvens
 - Ange frekvens i MHz (utan M-suffix)
 - Exempel: `161.4375` för 161.4375 MHz
-- Vanliga POCSAG-frekvenser i Sverige: 161.4375, 169.8125
+- Vanliga POCSAG-frekvenser i Sverige: 161.4375, 169.8000
 
 ### Filteradresser (RIC)
 - Lägg till en RIC-adress per rad
