@@ -27,8 +27,12 @@ class EmailConfig:
     SMTP_PORT: str = ""
     SENDER: str = ""
     APP_PASSWORD: str = ""
-    RECEIVER: str = ""
+    RECEIVERS: List[str] = None  # Ändrat från RECEIVER till RECEIVERS som lista
     ENABLED: bool = True
+    
+    def __post_init__(self):
+        if self.RECEIVERS is None:
+            self.RECEIVERS = []
 
 
 class FileManager:
@@ -56,7 +60,7 @@ class FileManager:
                     "SMTP_PORT": "",
                     "SENDER": "",
                     "APP_PASSWORD": "",
-                    "RECEIVER": "",
+                    "RECEIVERS": [],  # Ändrat till lista
                     "ENABLED": True
                 }
             }
@@ -72,7 +76,18 @@ class FileManager:
     
     def load_config(self) -> Dict:
         """Ladda konfiguration från fil"""
-        return self._read_json(self.config_file)
+        config = self._read_json(self.config_file)
+        
+        # Migrera gammal konfiguration med RECEIVER till RECEIVERS
+        if "email" in config and "RECEIVER" in config["email"]:
+            old_receiver = config["email"]["RECEIVER"]
+            if old_receiver and old_receiver not in config["email"].get("RECEIVERS", []):
+                config["email"]["RECEIVERS"] = config["email"].get("RECEIVERS", []) + [old_receiver]
+            del config["email"]["RECEIVER"]
+            self._write_json(self.config_file, config)
+            Logger.log("Migrerade gammal e-postkonfiguration till flera mottagare")
+        
+        return config
     
     def save_config(self, config: Dict):
         """Spara konfiguration till fil"""
@@ -280,10 +295,14 @@ class EmailSender:
         self.coord_converter = coordinate_converter
     
     def send_message(self, subject: str, alpha_content: str):
-        """Skicka e-post med avduplicering-kontroll"""
+        """Skicka e-post med avduplicering-kontroll till flera mottagare"""
         try:
             if not self.config.ENABLED:
                 Logger.log("E-post är avstängd.")
+                return
+            
+            if not self.config.RECEIVERS:
+                Logger.log("Inga e-postmottagare konfigurerade.")
                 return
             
             # Kontrollera avduplicering
@@ -294,7 +313,8 @@ class EmailSender:
             msg = EmailMessage()
             msg["Subject"] = subject
             msg["From"] = self.config.SENDER
-            msg["To"] = self.config.RECEIVER
+            # Lägg till alla mottagare som BCC för att dölja dem från varandra
+            msg["Bcc"] = ", ".join(self.config.RECEIVERS)
             
             # Lägg till kartlänk om koordinater hittades
             map_link = self._create_map_link(subject)
@@ -306,26 +326,36 @@ class EmailSender:
                 smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
                 smtp.send_message(msg)
             
-            Logger.log(f"E-post skickad för: '{alpha_content}'")
+            Logger.log(f"E-post skickad till {len(self.config.RECEIVERS)} mottagare för: '{alpha_content}'")
             
         except Exception as e:
             Logger.log(f"E-postfel: {e}")
     
     def send_test_email(self) -> str:
-        """Skicka test-e-post och returnera resultatmeddelande"""
+        """Skicka test-e-post till alla mottagare och returnera resultatmeddelande"""
         try:
+            if not self.config.RECEIVERS:
+                return "Inga e-postmottagare konfigurerade."
+            
             msg = EmailMessage()
             msg["Subject"] = "Testmail från POCSAG-systemet"
             msg["From"] = self.config.SENDER
-            msg["To"] = self.config.RECEIVER
-            msg.set_content("Detta är ett testmeddelande.")
+            # Använd BCC för testmail också
+            msg["Bcc"] = ", ".join(self.config.RECEIVERS)
+            
+            content = f"Detta är ett testmeddelande.\n\nSkickat till {len(self.config.RECEIVERS)} mottagare:\n"
+            for i, receiver in enumerate(self.config.RECEIVERS, 1):
+                content += f"{i}. {receiver}\n"
+            
+            msg.set_content(content)
             
             with smtplib.SMTP_SSL(self.config.SMTP_SERVER, int(self.config.SMTP_PORT)) as smtp:
                 smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
                 smtp.send_message(msg)
             
-            Logger.log("Testmail skickat.")
-            return "Testmail skickades OK."
+            success_msg = f"Testmail skickades OK till {len(self.config.RECEIVERS)} mottagare."
+            Logger.log(success_msg)
+            return success_msg
             
         except Exception as e:
             error_msg = f"Fel vid testmail: {e}"
@@ -508,6 +538,10 @@ class POCSAGApp:
         
         # Initialisera e-post-komponenter
         email_config_dict = self.config.get("email", {})
+        # Hantera bakåtkompatibilitet för RECEIVERS
+        if "RECEIVERS" not in email_config_dict and "RECEIVER" in email_config_dict:
+            email_config_dict["RECEIVERS"] = [email_config_dict["RECEIVER"]] if email_config_dict["RECEIVER"] else []
+        
         self.email_config = EmailConfig(**email_config_dict)
         self.email_deduplicator = EmailDeduplicator()
         self.coordinate_converter = CoordinateConverter()
@@ -607,7 +641,21 @@ class POCSAGApp:
             self.email_config.SMTP_PORT = request.form.get("smtp_port", "").strip()
             self.email_config.SENDER = request.form.get("sender", "").strip()
             self.email_config.APP_PASSWORD = request.form.get("app_password", "").strip()
-            self.email_config.RECEIVER = request.form.get("receiver", "").strip()
+            
+            # Hantera flera mottagare - dela upp på rader och kommatecken
+            receivers_input = request.form.get("receivers", "").strip()
+            if receivers_input:
+                # Dela upp på både rader och kommatecken, rensa tomma poster
+                receivers = []
+                for line in receivers_input.splitlines():
+                    for email in line.split(","):
+                        email = email.strip()
+                        if email and "@" in email:  # Enkel validering
+                            receivers.append(email)
+                self.email_config.RECEIVERS = receivers
+            else:
+                self.email_config.RECEIVERS = []
+            
             self.email_config.ENABLED = request.form.get("enabled") == "on"
             
             # Spara till konfiguration
@@ -616,13 +664,15 @@ class POCSAGApp:
                 "SMTP_PORT": self.email_config.SMTP_PORT,
                 "SENDER": self.email_config.SENDER,
                 "APP_PASSWORD": self.email_config.APP_PASSWORD,
-                "RECEIVER": self.email_config.RECEIVER,
+                "RECEIVERS": self.email_config.RECEIVERS,
                 "ENABLED": self.email_config.ENABLED
             }
             self.file_manager.save_config(self.config)
             
             if action == "test":
                 message = self.email_sender.send_test_email()
+            elif action == "save":
+                message = f"Inställningar sparade med {len(self.email_config.RECEIVERS)} mottagare."
         
         return render_template_string(
             EMAIL_SETTINGS_TEMPLATE,
@@ -768,7 +818,7 @@ label {
   font-weight: bold;
   color: #333;
 }
-input[type="text"], input[type="password"] { 
+input[type="text"], input[type="password"], textarea { 
   width: 100%; 
   padding: 12px; 
   border: 1px solid #ddd; 
@@ -776,10 +826,14 @@ input[type="text"], input[type="password"] {
   font-size: 14px;
   box-sizing: border-box;
 }
-input[type="text"]:focus, input[type="password"]:focus {
+input[type="text"]:focus, input[type="password"]:focus, textarea:focus {
   border-color: #0078D7;
   outline: none;
   box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.2);
+}
+textarea {
+  resize: vertical;
+  min-height: 80px;
 }
 .checkbox-group {
   display: flex;
@@ -862,10 +916,11 @@ button[name="action"][value="test"]:hover {
   <div class="info-box">
     <strong>📧 Dubblettskydd:</strong> E-post med samma innehåll blockeras i 10 minuter för att undvika spam.
     <br><strong>🔒 Säkerhet:</strong> Använd app-specifika lösenord för Gmail/Outlook.
+    <br><strong>👥 Flera mottagare:</strong> Alla mottagare får e-post via BCC så de ser inte varandra.
   </div>
   
   {% if msg %}
-    <div class="message {% if 'OK' in msg or 'skickades' in msg %}success{% else %}error{% endif %}">
+    <div class="message {% if 'OK' in msg or 'sparade' in msg %}success{% else %}error{% endif %}">
       {{ msg }}
     </div>
   {% endif %}
@@ -896,8 +951,9 @@ button[name="action"][value="test"]:hover {
       </div>
       
       <div class="form-group">
-        <label for="receiver">Mottagare (e-postadress):</label>
-        <input type="text" id="receiver" name="receiver" value="{{ cfg.RECEIVER }}" placeholder="mottagare@email.com">
+        <label for="receivers">Mottagare (e-postadresser):</label>
+        <textarea id="receivers" name="receivers" placeholder="En e-postadress per rad eller separera med komma:&#10;mottagare1@email.com&#10;mottagare2@email.com, mottagare3@email.com">{{ '\n'.join(cfg.RECEIVERS) }}</textarea>
+        <div class="help-text">Lägg till flera mottagare på separata rader eller separera med komma. Alla får e-post via BCC (dold kopia).</div>
       </div>
       
       <div class="checkbox-group">
