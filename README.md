@@ -40,7 +40,7 @@ Utvecklad av: SA7BNB - Anders Isaksson
 ## Installation
 1. Installera din Raspberry Pi med Raspberry Pi Imager och välj det minimalistiska Raspberry Pi OS Lite (32-bitars).
 2. Under installationen är det viktigt att användaren du skapar heter sa7bnb och inget annat. Aktivera även SSH och konfigurera ditt WiFi om du planerar att använda det.
-3. Koppla upp dig via SSH och kör detta kommando sudo apt update && sudo apt install git -y && git clone https://github.com/sa7bnb/pocsag2025.git && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
+3. Koppla upp dig via SSH och kör detta kommando  : sudo apt update && sudo apt install git -y && git clone https://github.com/sa7bnb/pocsag2025.git && sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj -y && sudo raspi-config --expand-rootfs && sudo reboot
 4. Kör cd pocsag2025 och kör chmod +x server.py
 5. kör sudo crontab -e och lägg detta längst upp i listan
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
