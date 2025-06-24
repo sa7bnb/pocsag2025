@@ -21,7 +21,7 @@ Utvecklad av: SA7BNB - Anders Isaksson
 
 ### 📧 E-postnotifieringar
 - Automatiska e-postnotifieringar för filtrerade Alpha-meddelanden
-- Dubblettskydd (samma meddelande blockeras i 5 minuter)
+- Dubblettskydd (samma meddelande blockeras i 10 minuter)
 - Stöd för Gmail, Outlook och andra SMTP-servrar
 - Kartlänkar för meddelanden med RT90-koordinater
 
