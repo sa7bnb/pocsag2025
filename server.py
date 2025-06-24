@@ -195,7 +195,7 @@ class MessageProcessor:
 class EmailDeduplicator:
     """Hanterar e-post-avduplicering för att förhindra spam"""
     
-    def __init__(self, cooldown_seconds: int = 300, auto_cleanup_minutes: int = 10):
+    def __init__(self, cooldown_seconds: int = 600, auto_cleanup_minutes: int = 10):
         self.cooldown = cooldown_seconds
         self.auto_cleanup_interval = auto_cleanup_minutes * 60  # Konvertera till sekunder
         self.cache: Dict[str, float] = {}
@@ -860,7 +860,7 @@ button[name="action"][value="test"]:hover {
   <h1>E-postinställningar</h1>
   
   <div class="info-box">
-    <strong>📧 Dubblettskydd:</strong> E-post med samma innehåll blockeras i 5 minuter för att undvika spam.
+    <strong>📧 Dubblettskydd:</strong> E-post med samma innehåll blockeras i 10 minuter för att undvika spam.
     <br><strong>🔒 Säkerhet:</strong> Använd app-specifika lösenord för Gmail/Outlook.
   </div>
   
