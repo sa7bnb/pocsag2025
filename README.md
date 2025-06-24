@@ -44,7 +44,6 @@ Utvecklad av: SA7BNB - Anders Isaksson
 4. Kör cd pocsag2025 och kör chmod +x server.py
 5. kör sudo crontab -e och lägg detta längst upp i listan
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
-0 0 * * 1 /sbin/shutdown -r now
 6. Starta om enheten via sudo reboot.
 7. Vänta en liten stund och surfa in på websidan (http://pi-ipadress:5000/)
 
