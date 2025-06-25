@@ -294,7 +294,7 @@ class EmailSender:
         self.deduplicator = deduplicator
         self.coord_converter = coordinate_converter
     
-    def send_message(self, subject: str, alpha_content: str):
+    def send_message(self, subject: str, message_content: str):
         """Skicka e-post med avduplicering-kontroll till flera mottagare"""
         try:
             if not self.config.ENABLED:
@@ -305,8 +305,8 @@ class EmailSender:
                 Logger.log("Inga e-postmottagare konfigurerade.")
                 return
             
-            # Kontrollera avduplicering
-            if not self.deduplicator.should_send(alpha_content):
+            # Kontrollera avduplicering baserat på meddelandeinnehållet
+            if not self.deduplicator.should_send(message_content):
                 return
             
             # Skapa e-post
@@ -317,8 +317,8 @@ class EmailSender:
             msg["Bcc"] = ", ".join(self.config.RECEIVERS)
             
             # Lägg till kartlänk om koordinater hittades
-            map_link = self._create_map_link(subject)
-            content = f"Meddelande:\n\n{subject}{map_link}"
+            map_link = self._create_map_link(message_content)
+            content = f"Meddelande:\n\n{message_content}{map_link}"
             msg.set_content(content)
             
             # Skicka e-post
@@ -326,6 +326,8 @@ class EmailSender:
                 smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
                 smtp.send_message(msg)
             
+            # Extrahera bara alpha-innehållet för loggning
+            alpha_content = message_content.split(" Alpha:", 1)[-1].strip() if " Alpha:" in message_content else message_content
             Logger.log(f"E-post skickad till {len(self.config.RECEIVERS)} mottagare för: '{alpha_content}'")
             
         except Exception as e:
@@ -362,9 +364,9 @@ class EmailSender:
             Logger.log(error_msg)
             return error_msg
     
-    def _create_map_link(self, subject: str) -> str:
-        """Skapa kartlänk från koordinater i ämne"""
-        match = re.search(r'X=(\d+)\s+Y=(\d+)', subject)
+    def _create_map_link(self, message_content: str) -> str:
+        """Skapa kartlänk från koordinater i meddelande"""
+        match = re.search(r'X=(\d+)\s+Y=(\d+)', message_content)
         if not match:
             return ""
         
@@ -424,8 +426,11 @@ class MessageHandler:
         """Hantera Alpha-innehåll för e-post-sändning"""
         if "Alpha:" in processed_message:
             alpha_content = processed_message.split("Alpha:", 1)[1].strip()
-            email_subject = f"{timestamp} {alpha_content}"
-            self.email_sender.send_message(email_subject, alpha_content)
+            # Ändrat: Använd kort ämnesrad istället för hela meddelandet
+            email_subject = "Pocsag Larm"
+            # Skicka hela meddelandet (inklusive timestamp) i e-postens innehåll
+            full_message = f"{timestamp} {alpha_content}"
+            self.email_sender.send_message(email_subject, full_message)
     
     def _append_to_file(self, file_path: Path, content: str):
         """Lägg till innehåll i fil"""
