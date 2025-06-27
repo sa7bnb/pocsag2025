@@ -27,12 +27,20 @@ class EmailConfig:
     SMTP_PORT: str = ""
     SENDER: str = ""
     APP_PASSWORD: str = ""
-    RECEIVERS: List[str] = None  # Ändrat från RECEIVER till RECEIVERS som lista
+    RECEIVERS: List[str] = None
     ENABLED: bool = True
     
     def __post_init__(self):
         if self.RECEIVERS is None:
             self.RECEIVERS = []
+
+
+@dataclass
+class BlacklistConfig:
+    """Konfigurationsklass för blacklist"""
+    addresses: Set[str]
+    words: Set[str]
+    case_sensitive: bool = False
 
 
 class FileManager:
@@ -55,12 +63,17 @@ class FileManager:
             default_config = {
                 "frequency": "161.4375M",
                 "filters": [],
+                "blacklist": {
+                    "addresses": [],
+                    "words": [],
+                    "case_sensitive": False
+                },
                 "email": {
                     "SMTP_SERVER": "",
                     "SMTP_PORT": "",
                     "SENDER": "",
                     "APP_PASSWORD": "",
-                    "RECEIVERS": [],  # Ändrat till lista
+                    "RECEIVERS": [],
                     "ENABLED": True
                 }
             }
@@ -87,6 +100,26 @@ class FileManager:
             self._write_json(self.config_file, config)
             Logger.log("Migrerade gammal e-postkonfiguration till flera mottagare")
         
+        # Migrera gammal blacklist från textfil till config
+        if "blacklist" not in config:
+            config["blacklist"] = {
+                "addresses": [],
+                "words": [],
+                "case_sensitive": False
+            }
+            # Försök migrera från gamla blacklist.txt
+            if self.blacklist_file.exists():
+                try:
+                    content = self.blacklist_file.read_text(encoding="utf-8")
+                    old_addresses = [line.strip() for line in content.splitlines() 
+                                   if line.strip().isdigit()]
+                    config["blacklist"]["addresses"] = old_addresses
+                    Logger.log(f"Migrerade {len(old_addresses)} adresser från blacklist.txt")
+                except Exception as e:
+                    Logger.log(f"Fel vid migrering av blacklist: {e}")
+            
+            self._write_json(self.config_file, config)
+        
         return config
     
     def save_config(self, config: Dict):
@@ -94,17 +127,16 @@ class FileManager:
         self._write_json(self.config_file, config)
         Logger.log("Konfiguration sparad.")
     
-    def load_blacklist(self) -> Set[str]:
-        """Ladda svartlistade adresser från fil"""
-        try:
-            content = self.blacklist_file.read_text(encoding="utf-8")
-            addresses = {line.strip() for line in content.splitlines() 
-                        if line.strip().isdigit()}
-            Logger.log(f"Blacklist laddad med {len(addresses)} adresser.")
-            return addresses
-        except Exception as e:
-            Logger.log(f"Fel vid laddning av blacklist: {e}")
-            return set()
+    def load_blacklist(self) -> BlacklistConfig:
+        """Ladda blacklist-konfiguration"""
+        config = self.load_config()
+        blacklist_config = config.get("blacklist", {})
+        
+        return BlacklistConfig(
+            addresses=set(blacklist_config.get("addresses", [])),
+            words=set(blacklist_config.get("words", [])),
+            case_sensitive=blacklist_config.get("case_sensitive", False)
+        )
     
     def _read_json(self, file_path: Path) -> Dict:
         """Läs JSON från fil"""
@@ -207,12 +239,48 @@ class MessageProcessor:
         return cleaned.strip()
 
 
+class BlacklistFilter:
+    """Hanterar blacklist-filtrering för både RIC-adresser och ord"""
+    
+    def __init__(self, blacklist_config: BlacklistConfig):
+        self.config = blacklist_config
+        Logger.log(f"Blacklist initierad: {len(self.config.addresses)} adresser, "
+                  f"{len(self.config.words)} ord, "
+                  f"skiftlägeskänslig: {self.config.case_sensitive}")
+    
+    def should_block_message(self, ric_address: str, message_content: str) -> Tuple[bool, str]:
+        """
+        Kontrollera om meddelandet ska blockeras
+        Returnerar (should_block, reason)
+        """
+        # Kontrollera RIC-adress
+        if ric_address in self.config.addresses:
+            return True, f"Blockerad RIC-adress: {ric_address}"
+        
+        # Kontrollera ord i meddelandet
+        if self.config.words:
+            search_text = message_content if self.config.case_sensitive else message_content.lower()
+            search_words = self.config.words if self.config.case_sensitive else {word.lower() for word in self.config.words}
+            
+            for blocked_word in search_words:
+                if blocked_word in search_text:
+                    return True, f"Blockerat ord: '{blocked_word}'"
+        
+        return False, ""
+    
+    def update_config(self, blacklist_config: BlacklistConfig):
+        """Uppdatera blacklist-konfiguration"""
+        self.config = blacklist_config
+        Logger.log(f"Blacklist uppdaterad: {len(self.config.addresses)} adresser, "
+                  f"{len(self.config.words)} ord")
+
+
 class EmailDeduplicator:
     """Hanterar e-post-avduplicering för att förhindra spam"""
     
     def __init__(self, cooldown_seconds: int = 600, auto_cleanup_minutes: int = 10):
         self.cooldown = cooldown_seconds
-        self.auto_cleanup_interval = auto_cleanup_minutes * 60  # Konvertera till sekunder
+        self.auto_cleanup_interval = auto_cleanup_minutes * 60
         self.cache: Dict[str, float] = {}
         self.last_cleanup = time.time()
         self._start_auto_cleanup()
@@ -251,7 +319,7 @@ class EmailDeduplicator:
         """Starta automatisk rensnings-tråd"""
         def cleanup_thread():
             while True:
-                time.sleep(60)  # Kontrollera varje minut
+                time.sleep(60)
                 current_time = time.time()
                 self._check_auto_cleanup(current_time)
         
@@ -313,7 +381,6 @@ class EmailSender:
             msg = EmailMessage()
             msg["Subject"] = subject
             msg["From"] = self.config.SENDER
-            # Lägg till alla mottagare som BCC för att dölja dem från varandra
             msg["Bcc"] = ", ".join(self.config.RECEIVERS)
             
             # Lägg till kartlänk om koordinater hittades
@@ -326,7 +393,6 @@ class EmailSender:
                 smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
                 smtp.send_message(msg)
             
-            # Extrahera bara alpha-innehållet för loggning
             alpha_content = message_content.split(" Alpha:", 1)[-1].strip() if " Alpha:" in message_content else message_content
             Logger.log(f"E-post skickad till {len(self.config.RECEIVERS)} mottagare för: '{alpha_content}'")
             
@@ -342,7 +408,6 @@ class EmailSender:
             msg = EmailMessage()
             msg["Subject"] = "Testmail från POCSAG-systemet"
             msg["From"] = self.config.SENDER
-            # Använd BCC för testmail också
             msg["Bcc"] = ", ".join(self.config.RECEIVERS)
             
             content = f"Detta är ett testmeddelande.\n\nSkickat till {len(self.config.RECEIVERS)} mottagare:\n"
@@ -426,9 +491,7 @@ class MessageHandler:
         """Hantera Alpha-innehåll för e-post-sändning"""
         if "Alpha:" in processed_message:
             alpha_content = processed_message.split("Alpha:", 1)[1].strip()
-            # Ändrat: Använd kort ämnesrad istället för hela meddelandet
             email_subject = "Pocsag Larm"
-            # Skicka hela meddelandet (inklusive timestamp) i e-postens innehåll
             full_message = f"{timestamp} {alpha_content}"
             self.email_sender.send_message(email_subject, full_message)
     
@@ -444,9 +507,9 @@ class MessageHandler:
 class DecoderManager:
     """Hanterar RTL-SDR och multimon-ng-processer"""
     
-    def __init__(self, message_handler: MessageHandler, blacklisted_addresses: Set[str]):
+    def __init__(self, message_handler: MessageHandler, blacklist_filter: BlacklistFilter):
         self.message_handler = message_handler
-        self.blacklisted_addresses = blacklisted_addresses
+        self.blacklist_filter = blacklist_filter
         self.rtl_proc: Optional[subprocess.Popen] = None
         self.decoder_proc: Optional[subprocess.Popen] = None
         self.filter_addresses: Set[str] = set()
@@ -494,6 +557,10 @@ class DecoderManager:
         """Uppdatera filteradresser"""
         self.filter_addresses = filter_addresses
     
+    def update_blacklist(self, blacklist_filter: BlacklistFilter):
+        """Uppdatera blacklist-filter"""
+        self.blacklist_filter = blacklist_filter
+    
     def _read_loop(self):
         """Huvudloop för läsning av avkodare-utdata"""
         if not self.decoder_proc:
@@ -512,8 +579,12 @@ class DecoderManager:
                 
                 ric_address = match.group(1)
                 
-                # Hoppa över svartlistade adresser
-                if ric_address in self.blacklisted_addresses:
+                # Kontrollera blacklist (både RIC-adress och ord)
+                should_block, block_reason = self.blacklist_filter.should_block_message(
+                    ric_address, processed_message
+                )
+                if should_block:
+                    Logger.log(f"Meddelande blockerat: {block_reason}")
                     continue
                 
                 # Hantera meddelandet
@@ -541,9 +612,12 @@ class POCSAGApp:
         self.current_freq = self.config.get("frequency", "161.4375M")
         self.filter_addresses = set(self.config.get("filters", []))
         
+        # Initialisera blacklist
+        self.blacklist_config = self.file_manager.load_blacklist()
+        self.blacklist_filter = BlacklistFilter(self.blacklist_config)
+        
         # Initialisera e-post-komponenter
         email_config_dict = self.config.get("email", {})
-        # Hantera bakåtkompatibilitet för RECEIVERS
         if "RECEIVERS" not in email_config_dict and "RECEIVER" in email_config_dict:
             email_config_dict["RECEIVERS"] = [email_config_dict["RECEIVER"]] if email_config_dict["RECEIVER"] else []
         
@@ -557,9 +631,8 @@ class POCSAGApp:
         # Initialisera meddelandehantering
         self.message_handler = MessageHandler(self.file_manager, self.email_sender)
         
-        # Ladda svartlista och initialisera avkodare
-        self.blacklisted_addresses = self.file_manager.load_blacklist()
-        self.decoder_manager = DecoderManager(self.message_handler, self.blacklisted_addresses)
+        # Initialisera avkodare
+        self.decoder_manager = DecoderManager(self.message_handler, self.blacklist_filter)
         self.decoder_manager.update_filter_addresses(self.filter_addresses)
         
         # Initialisera Flask-app
@@ -576,6 +649,7 @@ class POCSAGApp:
         self.app.add_url_rule("/download_all", "download_all", self.download_all)
         self.app.add_url_rule("/download_filtered", "download_filtered", self.download_filtered)
         self.app.add_url_rule("/email", "email_settings", self.email_settings, methods=["GET", "POST"])
+        self.app.add_url_rule("/blacklist", "blacklist_settings", self.blacklist_settings, methods=["GET", "POST"])
     
     def run(self):
         """Starta applikationen"""
@@ -647,15 +721,14 @@ class POCSAGApp:
             self.email_config.SENDER = request.form.get("sender", "").strip()
             self.email_config.APP_PASSWORD = request.form.get("app_password", "").strip()
             
-            # Hantera flera mottagare - dela upp på rader och kommatecken
+            # Hantera flera mottagare
             receivers_input = request.form.get("receivers", "").strip()
             if receivers_input:
-                # Dela upp på både rader och kommatecken, rensa tomma poster
                 receivers = []
                 for line in receivers_input.splitlines():
                     for email in line.split(","):
                         email = email.strip()
-                        if email and "@" in email:  # Enkel validering
+                        if email and "@" in email:
                             receivers.append(email)
                 self.email_config.RECEIVERS = receivers
             else:
@@ -682,6 +755,60 @@ class POCSAGApp:
         return render_template_string(
             EMAIL_SETTINGS_TEMPLATE,
             cfg=self.email_config,
+            msg=message
+        )
+    
+    def blacklist_settings(self):
+        message = ""
+        if request.method == "POST":
+            # Uppdatera blacklist-konfiguration
+            addresses_input = request.form.get("addresses", "").strip()
+            words_input = request.form.get("words", "").strip()
+            case_sensitive = request.form.get("case_sensitive") == "on"
+            
+            # Bearbeta adresser
+            addresses = set()
+            if addresses_input:
+                for line in addresses_input.splitlines():
+                    addr = line.strip()
+                    if addr.isdigit():
+                        addresses.add(addr)
+            
+            # Bearbeta ord
+            words = set()
+            if words_input:
+                for line in words_input.splitlines():
+                    word = line.strip()
+                    if word:
+                        words.add(word)
+            
+            # Uppdatera konfiguration
+            self.blacklist_config = BlacklistConfig(
+                addresses=addresses,
+                words=words,
+                case_sensitive=case_sensitive
+            )
+            
+            # Spara till fil
+            self.config["blacklist"] = {
+                "addresses": list(addresses),
+                "words": list(words),
+                "case_sensitive": case_sensitive
+            }
+            self.file_manager.save_config(self.config)
+            
+            # Uppdatera filter i decoder
+            self.blacklist_filter.update_config(self.blacklist_config)
+            self.decoder_manager.update_blacklist(self.blacklist_filter)
+            
+            message = f"Blacklist uppdaterad: {len(addresses)} adresser, {len(words)} ord."
+            Logger.log(message)
+        
+        return render_template_string(
+            BLACKLIST_SETTINGS_TEMPLATE,
+            addresses="\n".join(sorted(self.blacklist_config.addresses)),
+            words="\n".join(sorted(self.blacklist_config.words)),
+            case_sensitive=self.blacklist_config.case_sensitive,
             msg=message
         )
 
@@ -723,6 +850,9 @@ h2 { color: #003366; border-bottom: 2px solid #0078D7; padding-bottom: 5px; }
 <div class="section">
 <form method="GET" action="/email" class="inline">
   <button type="submit">E-postinställningar</button>
+</form>
+<form method="GET" action="/blacklist" class="inline">
+  <button type="submit" style="background-color: #dc3545;">🚫 Blacklist</button>
 </form>
 <form method="GET" action="/download_filtered" class="inline">
   <button type="submit">Ladda ner filtrerade</button>
@@ -970,6 +1100,210 @@ button[name="action"][value="test"]:hover {
         <button type="submit" name="action" value="save">💾 Spara inställningar</button>
         <button type="submit" name="action" value="test">📧 Skicka testmail</button>
       </div>
+    </form>
+  </div>
+  
+  <a href="/" class="back-link">← Tillbaka till startsidan</a>
+</div>
+
+</body></html>
+"""
+
+BLACKLIST_SETTINGS_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Blacklist-inställningar - POCSAG 2025</title>
+<style>
+body { 
+  font-family: 'Segoe UI', Tahoma, sans-serif; 
+  background: #e9eef4; 
+  padding: 20px; 
+  line-height: 1.6;
+}
+.container { 
+  max-width: 700px; 
+  margin: 0 auto; 
+}
+h1 { 
+  color: #003366; 
+  text-align: center;
+  margin-bottom: 30px;
+}
+.form-container { 
+  background: #fff; 
+  padding: 30px; 
+  border-radius: 8px; 
+  box-shadow: 0 0 15px rgba(0,0,0,0.1);
+}
+.form-group {
+  margin-bottom: 20px;
+}
+.form-row {
+  display: flex;
+  gap: 20px;
+}
+.form-row .form-group {
+  flex: 1;
+}
+label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+  color: #333;
+}
+textarea { 
+  width: 100%; 
+  padding: 12px; 
+  border: 1px solid #ddd; 
+  border-radius: 4px; 
+  font-size: 14px;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 150px;
+  font-family: 'Courier New', monospace;
+}
+textarea:focus {
+  border-color: #dc3545;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
+}
+.checkbox-group {
+  display: flex;
+  align-items: center;
+  margin-bottom: 25px;
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 4px;
+  border-left: 4px solid #dc3545;
+}
+.checkbox-group input[type="checkbox"] {
+  margin-right: 10px;
+  transform: scale(1.2);
+}
+button { 
+  background-color: #dc3545; 
+  color: white; 
+  padding: 12px 20px; 
+  border: none; 
+  border-radius: 4px; 
+  font-weight: bold; 
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  width: 100%;
+}
+button:hover { 
+  background-color: #c82333; 
+}
+.info-box { 
+  background: #fff3cd; 
+  border: 1px solid #ffeaa7; 
+  padding: 15px; 
+  margin-bottom: 25px; 
+  border-radius: 4px; 
+  border-left: 5px solid #ffc107;
+}
+.warning-box {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  padding: 15px;
+  margin-bottom: 25px;
+  border-radius: 4px;
+  border-left: 5px solid #dc3545;
+  color: #721c24;
+}
+.message {
+  padding: 15px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+.message.success {
+  background: #d4edda;
+  border: 1px solid #c3e6cb;
+  color: #155724;
+}
+.message.error {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+}
+.back-link {
+  display: inline-block;
+  margin-top: 20px;
+  color: #0078D7;
+  text-decoration: none;
+  font-weight: bold;
+}
+.back-link:hover {
+  text-decoration: underline;
+}
+.help-text {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+.section-title {
+  color: #dc3545;
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+}
+.section-title::before {
+  content: "🚫";
+  margin-right: 8px;
+}
+</style></head><body>
+
+<div class="container">
+  <h1>🚫 Blacklist-inställningar</h1>
+  
+  <div class="warning-box">
+    <strong>⚠️ Varning:</strong> Meddelanden som matchar blacklist-reglerna kommer att blockeras permanent och visas inte i gränssnittet eller loggar.
+  </div>
+  
+  <div class="info-box">
+    <strong>📝 Hur det fungerar:</strong>
+    <ul style="margin: 10px 0 0 20px;">
+      <li><strong>RIC-adresser:</strong> Blockerar alla meddelanden från specifika adresser</li>
+      <li><strong>Ordfilter:</strong> Blockerar meddelanden som innehåller specifika ord eller fraser</li>
+      <li><strong>Skiftlägeskänslighet:</strong> Avgör om ordfilter ska vara känsliga för stora/små bokstäver</li>
+    </ul>
+  </div>
+  
+  {% if msg %}
+    <div class="message success">
+      {{ msg }}
+    </div>
+  {% endif %}
+  
+  <div class="form-container">
+    <form method="POST">
+      <div class="form-row">
+        <div class="form-group">
+          <div class="section-title">RIC-adresser</div>
+          <label for="addresses">Blockerade RIC-adresser:</label>
+          <textarea id="addresses" name="addresses" placeholder="En RIC-adress per rad, endast siffror:&#10;123456&#10;789012&#10;555123">{{ addresses }}</textarea>
+          <div class="help-text">Ange en RIC-adress per rad. Endast numeriska värden accepteras.</div>
+        </div>
+        
+        <div class="form-group">
+          <div class="section-title">Ordfilter</div>
+          <label for="words">Blockerade ord/fraser:</label>
+          <textarea id="words" name="words" placeholder="Ett ord eller fras per rad:&#10;SPAM&#10;Test meddelande&#10;Reklam">{{ words }}</textarea>
+          <div class="help-text">Ange ett ord eller en fras per rad. Meddelanden som innehåller dessa kommer att blockeras.</div>
+        </div>
+      </div>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="case_sensitive" name="case_sensitive" {% if case_sensitive %}checked{% endif %}>
+        <label for="case_sensitive">
+          <strong>Skiftlägeskänslig ordfiltrering</strong><br>
+          <small>Om aktiverad: "TEST" och "test" behandlas som olika ord. Om inaktiverad: båda blockeras.</small>
+        </label>
+      </div>
+      
+      <button type="submit">🚫 Uppdatera Blacklist</button>
     </form>
   </div>
   
