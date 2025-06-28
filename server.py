@@ -292,7 +292,13 @@ class EmailDeduplicator:
         # Kontrollera om det är dags för automatisk rensning
         self._check_auto_cleanup(current_time)
         
-        message_hash = hashlib.md5(message_text.encode('utf-8')).hexdigest()
+        # Extrahera Alpha-innehållet för jämförelse (ta bort tidsstämpel)
+        alpha_content = self._extract_alpha_content(message_text)
+        if not alpha_content:
+            # Om inget Alpha-innehåll finns, använd hela meddelandet
+            alpha_content = message_text
+        
+        message_hash = hashlib.md5(alpha_content.encode('utf-8')).hexdigest()
         
         # Rensa gamla poster
         self._clean_cache(current_time)
@@ -301,13 +307,27 @@ class EmailDeduplicator:
         if message_hash in self.cache:
             time_diff = current_time - self.cache[message_hash]
             if time_diff < self.cooldown:
-                Logger.log(f"Email blockerad - dublett inom {self.cooldown/60:.1f} minuter (hash: {message_hash[:8]})")
+                Logger.log(f"Email blockerad - dublett inom {self.cooldown/60:.1f} minuter (Alpha: '{alpha_content[:50]}...')")
                 return False
         
         # Uppdatera cache
         self.cache[message_hash] = current_time
-        Logger.log(f"Email tillåten - nytt meddelande (hash: {message_hash[:8]})")
+        Logger.log(f"Email tillåten - nytt Alpha-innehåll (hash: {message_hash[:8]})")
         return True
+    
+    def _extract_alpha_content(self, message_text: str) -> str:
+        """Extrahera Alpha-innehållet från meddelandet för dubblettjämförelse"""
+        # Ta bort tidsstämpel från början av meddelandet
+        # Format: "[2025-06-28 12:01:47] ..."
+        cleaned_message = re.sub(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*', '', message_text)
+        
+        # Om meddelandet innehåller "Alpha:", använd bara Alpha-delen
+        if "Alpha:" in cleaned_message:
+            alpha_content = cleaned_message.split("Alpha:", 1)[1].strip()
+            return alpha_content
+        
+        # Annars använd hela det rensade meddelandet
+        return cleaned_message
     
     def clear_cache(self):
         """Rensa hela cachen"""
@@ -491,7 +511,7 @@ class MessageHandler:
         """Hantera Alpha-innehåll för e-post-sändning"""
         if "Alpha:" in processed_message:
             alpha_content = processed_message.split("Alpha:", 1)[1].strip()
-            email_subject = "Pocsag Larm"
+            email_subject = "Pocsag Larm - Rix"
             full_message = f"{timestamp} {alpha_content}"
             self.email_sender.send_message(email_subject, full_message)
     
@@ -1049,7 +1069,7 @@ button[name="action"][value="test"]:hover {
   <h1>E-postinställningar</h1>
   
   <div class="info-box">
-    <strong>📧 Dubblettskydd:</strong> E-post med samma innehåll blockeras i 10 minuter för att undvika spam.
+    <strong>📧 Förbättrad dubblettskydd:</strong> E-post med samma Alpha-innehåll blockeras i 10 minuter (tidsstämplar ignoreras).
     <br><strong>🔒 Säkerhet:</strong> Använd app-specifika lösenord för Gmail/Outlook.
     <br><strong>👥 Flera mottagare:</strong> Alla mottagare får e-post via BCC så de ser inte varandra.
   </div>
