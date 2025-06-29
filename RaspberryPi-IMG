@@ -44,7 +44,7 @@ Om du vill använda WiFi istället för kabelanslutning:
 
 Anslut via SSH med PuTTY eller liknande
 Kör följande kommando:
-bashsudo raspi-config
+sudo raspi-config
 
 Välj "System Options" → "Wireless LAN"
 Följ instruktionerna för att ange SSID och lösenord
@@ -57,5 +57,5 @@ Lösenord: pocsag2025
 
 Byta lösenord
 För att ändra lösenordet via SSH/terminal:
-bashpasswd
+passwd
 Följ instruktionerna för att ange nuvarande lösenord och sedan det nya lösenordet.
