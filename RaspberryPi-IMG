@@ -1,0 +1,61 @@
+POCSAG2025 - Raspberry Pi 4 Setup Guide
+Förutsättningar
+
+Raspberry Pi 4
+16GB USB-minne (rekommenderat)
+RTLSDR-sticka
+Nätverkskabel (LAN)
+Router med DHCP aktiverat
+IMG : https://drive.google.com/file/d/16lmNAH9uJPXX9ESahAO_4U20d5aMaE_-/view?usp=drive_link
+
+Installation
+1. Flasha imagen
+Installera den medföljande .img-filen med Raspberry Pi Imager på ditt USB-minne.
+
+Notera: Denna guide förutsätter att du har ändrat boot-ordningen på din Pi för att starta från USB.
+
+2. Anslut hårdvaran
+
+Sätt i USB-minnet i en blå USB 3.0-port på din Raspberry Pi
+Anslut RTLSDR-stickan till en USB-port
+Anslut nätverkskabeln till routern
+
+3. Första uppstart
+
+Starta din Raspberry Pi och vänta några minuter
+Den första omstarten kan ta längre tid än vanligt
+
+4. Hitta IP-adressen
+Leta reda på Pi:ns IP-adress i din router. Enheten visas som POCSAG2025 i listan över anslutna enheter.
+5. Öppna webbgränssnittet
+Öppna en webbläsare och navigera till:
+http://[DIN-PI-IP-ADRESS]:5000
+Exempel: http://192.168.1.100:5000
+6. Konfigurera inställningar
+I webbgränssnittet kan du konfigurera:
+
+Frekvens
+RIC-nummer
+E-postinställningar
+Blacklist-inställningar
+
+WiFi-konfiguration (valfritt)
+Om du vill använda WiFi istället för kabelanslutning:
+
+Anslut via SSH med PuTTY eller liknande
+Kör följande kommando:
+bashsudo raspi-config
+
+Välj "System Options" → "Wireless LAN"
+Följ instruktionerna för att ange SSID och lösenord
+
+Inloggningsuppgifter
+SSH/Terminal-åtkomst
+
+Användare: sa7bnb
+Lösenord: pocsag2025
+
+Byta lösenord
+För att ändra lösenordet via SSH/terminal:
+bashpasswd
+Följ instruktionerna för att ange nuvarande lösenord och sedan det nya lösenordet.
