@@ -76,6 +76,7 @@ POCSAG 2025 är ett Python-baserat system för att avkoda och hantera POCSAG-med
 - Ange frekvens i MHz (utan M-suffix)
 - Exempel: `161.4375` för 161.4375 MHz
 - Vanliga POCSAG-frekvenser i Sverige: 161.4375, 169.8000
+- https://scannersverige.se/frekvenser-pocsag-personsokare/
 
 ### Filteradresser (RIC)
 - Lägg till en RIC-adress per rad
