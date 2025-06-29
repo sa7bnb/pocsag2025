@@ -46,7 +46,7 @@ POCSAG 2025 är ett Python-baserat system för att avkoda och hantera POCSAG-med
 ### Hårdvara
 - RTL-SDR-dongel (kompatibel med RTL2832U)
 - Lämplig antenn för aktuell frekvens
-- Linux-system med Raspberry Pi
+- Raspberry Pi 4
 
 ## Installation
 
