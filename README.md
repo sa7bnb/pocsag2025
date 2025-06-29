@@ -19,7 +19,7 @@ POCSAG 2025 är ett Python-baserat system för att avkoda och hantera POCSAG-med
 - Automatisk textbehandling och rensning av kontrollsymboler
 - Stöd för svenska tecken (åäö)
 
-### 🚫 Blacklist-funktioner (Nytt!)
+### 🚫 Blacklist-funktioner
 - **RIC-adressfiltrering:** Blockera alla meddelanden från specifika RIC-adresser
 - **Ordfiltrering:** Blockera meddelanden som innehåller specifika ord eller fraser
 - **Skiftlägeskänslighet:** Konfigurerbar case-sensitive/insensitive sökning
