@@ -2,6 +2,7 @@ POCSAG 2025 - Dokumentation
 POCSAG 2025 är ett Python-baserat system för att avkoda och hantera POCSAG-meddelanden med hjälp av RTL-SDR. Systemet erbjuder en webbaserad användargränssnitt för övervakning, filtrering och e-postnotifieringar av mottagna meddelanden.
 Utvecklad av: SA7BNB - Anders Isaksson
 🆕 Ny modulär arkitektur
+
 Systemet har omstrukturerats för bättre underhållbarhet och utveckling:
 •	config_manager.py - Konfigurationshantering och dataklasser
 •	utils.py - Hjälpfunktioner och verktyg
@@ -9,17 +10,21 @@ Systemet har omstrukturerats för bättre underhållbarhet och utveckling:
 •	message_handler.py - Meddelandehantering och avkodning
 •	server.py - Huvudserver och webbgränssnitt
 Huvudfunktioner
+
 📡 Radiomottagning
 •	Använder RTL-SDR för att ta emot POCSAG-signaler
 •	Stöder POCSAG512 och POCSAG1200
 •	Konfigurerbar frekvens (standard: 161.4375 MHz)
 •	Automatisk dekodning med multimon-ng
+
 🔍 Meddelandehantering
 •	Realtidsvisning av alla mottagna meddelanden
 •	Filtrering baserat på RIC-adresser (Radio Identity Code)
+
 •	🆕 Avancerad blacklist-funktion för oönskade adresser och innehåll
 •	Automatisk textbehandling och rensning av kontrollsymboler
 •	Stöd för svenska tecken (åäö)
+
 •	🆕 Förbättrad meddelandebearbetning med robust felhantering
 🚫 Blacklist-funktioner
 •	RIC-adressfiltrering: Blockera alla meddelanden från specifika RIC-adresser
@@ -28,13 +33,16 @@ Huvudfunktioner
 •	Webbaserad konfiguration: Enkelt att hantera via webbgränssnittet
 •	Intelligent filtrering: Söker i hela meddelandetexten
 •	Permanent blockering: Blockerade meddelanden visas inte i loggar eller gränssnitt
+
 •	🆕 Realtidsuppdatering: Ändringar träder i kraft omedelbart
 📧 E-postnotifieringar
 •	Automatiska e-postnotifieringar för filtrerade Alpha-meddelanden
+
 •	🆕 Stöd för flera mottagare (BCC för integritet)
 •	Förbättrat dubblettskydd (samma Alpha-innehåll blockeras i 10 minuter)
 •	Stöd för Gmail, Outlook och andra SMTP-servrar
 •	Kartlänkar för meddelanden med RT90-koordinater
+
 •	🆕 Konfigurerbar ämnesrad för e-postnotifieringar
 •	🆕 Automatisk testfunktion för att verifiera konfiguration
 🔐 Säkerhet och autentisering
