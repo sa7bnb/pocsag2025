@@ -1,645 +1,64 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import json
-import re
-import subprocess
-import threading
-import smtplib
-import time
-import hashlib
-from typing import Dict, Set, List, Optional, Tuple
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
+import secrets
+from functools import wraps
+from datetime import datetime, timedelta
+from flask import Flask, render_template_string, request, redirect, jsonify, send_file, session, flash, url_for
 
-from flask import Flask, render_template_string, request, redirect, jsonify, send_file
-from email.message import EmailMessage
-from pyproj import Transformer
+from config_manager import FileManager, AuthConfig, EmailConfig, SessionManager, EmailDeduplicator
+from utils import Logger, CoordinateConverter
+from email_handler import EmailSender
+from message_handler import MessageHandler, DecoderManager, BlacklistFilter
 
 
-@dataclass
-class EmailConfig:
-    """Konfigurationsklass för e-post"""
-    SMTP_SERVER: str = ""
-    SMTP_PORT: str = ""
-    SENDER: str = ""
-    APP_PASSWORD: str = ""
-    RECEIVERS: List[str] = None
-    ENABLED: bool = True
-    
-    def __post_init__(self):
-        if self.RECEIVERS is None:
-            self.RECEIVERS = []
-
-
-@dataclass
-class BlacklistConfig:
-    """Konfigurationsklass för blacklist"""
-    addresses: Set[str]
-    words: Set[str]
-    case_sensitive: bool = False
-
-
-class FileManager:
-    """Hanterar filsökvägar och operationer"""
-    
-    def __init__(self):
-        self.base_dir = Path(__file__).parent.absolute()
-        os.chdir(self.base_dir)
+def require_auth(f):
+    """Decorator for att krava autentisering pa skyddade rutter"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'authenticated' not in session or not session['authenticated']:
+            return redirect(url_for('login'))
         
-        self.config_file = self.base_dir / "config.json"
-        self.log_file_all = self.base_dir / "messages.txt"
-        self.log_file_filtered = self.base_dir / "filtered.messages.txt"
-        self.log_file_logging = self.base_dir / "loggning.txt"
-        self.blacklist_file = self.base_dir / "blacklist.txt"
-    
-    def initialize_files(self):
-        """Skapa standardfiler om de inte existerar"""
-        # Skapa standardkonfiguration om den inte existerar
-        if not self.config_file.exists():
-            default_config = {
-                "frequency": "161.4375M",
-                "filters": [],
-                "blacklist": {
-                    "addresses": [],
-                    "words": [],
-                    "case_sensitive": False
-                },
-                "email": {
-                    "SMTP_SERVER": "",
-                    "SMTP_PORT": "",
-                    "SENDER": "",
-                    "APP_PASSWORD": "",
-                    "RECEIVERS": [],
-                    "ENABLED": True
-                }
-            }
-            self._write_json(self.config_file, default_config)
-            Logger.log("Skapade config.json")
+        if 'login_time' in session:
+            login_time = datetime.fromisoformat(session['login_time'])
+            timeout_hours = session.get('timeout_hours', 24)
+            if datetime.now() - login_time > timedelta(hours=timeout_hours):
+                session.clear()
+                flash('Session har gatt ut. Logga in igen.', 'warning')
+                return redirect(url_for('login'))
         
-        # Skapa tomma filer om de inte existerar
-        for file_path in [self.log_file_all, self.log_file_filtered, 
-                         self.log_file_logging, self.blacklist_file]:
-            if not file_path.exists():
-                file_path.touch()
-                Logger.log(f"Skapade fil: {file_path}")
-    
-    def load_config(self) -> Dict:
-        """Ladda konfiguration från fil"""
-        config = self._read_json(self.config_file)
-        
-        # Migrera gammal konfiguration med RECEIVER till RECEIVERS
-        if "email" in config and "RECEIVER" in config["email"]:
-            old_receiver = config["email"]["RECEIVER"]
-            if old_receiver and old_receiver not in config["email"].get("RECEIVERS", []):
-                config["email"]["RECEIVERS"] = config["email"].get("RECEIVERS", []) + [old_receiver]
-            del config["email"]["RECEIVER"]
-            self._write_json(self.config_file, config)
-            Logger.log("Migrerade gammal e-postkonfiguration till flera mottagare")
-        
-        # Migrera gammal blacklist från textfil till config
-        if "blacklist" not in config:
-            config["blacklist"] = {
-                "addresses": [],
-                "words": [],
-                "case_sensitive": False
-            }
-            # Försök migrera från gamla blacklist.txt
-            if self.blacklist_file.exists():
-                try:
-                    content = self.blacklist_file.read_text(encoding="utf-8")
-                    old_addresses = [line.strip() for line in content.splitlines() 
-                                   if line.strip().isdigit()]
-                    config["blacklist"]["addresses"] = old_addresses
-                    Logger.log(f"Migrerade {len(old_addresses)} adresser från blacklist.txt")
-                except Exception as e:
-                    Logger.log(f"Fel vid migrering av blacklist: {e}")
-            
-            self._write_json(self.config_file, config)
-        
-        return config
-    
-    def save_config(self, config: Dict):
-        """Spara konfiguration till fil"""
-        self._write_json(self.config_file, config)
-        Logger.log("Konfiguration sparad.")
-    
-    def load_blacklist(self) -> BlacklistConfig:
-        """Ladda blacklist-konfiguration"""
-        config = self.load_config()
-        blacklist_config = config.get("blacklist", {})
-        
-        return BlacklistConfig(
-            addresses=set(blacklist_config.get("addresses", [])),
-            words=set(blacklist_config.get("words", [])),
-            case_sensitive=blacklist_config.get("case_sensitive", False)
-        )
-    
-    def _read_json(self, file_path: Path) -> Dict:
-        """Läs JSON från fil"""
-        with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    
-    def _write_json(self, file_path: Path, data: Dict):
-        """Skriv JSON till fil"""
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-class Logger:
-    """Centraliserat loggningsverktyg"""
-    
-    log_file = None
-    
-    @classmethod
-    def set_log_file(cls, log_file_path: Path):
-        cls.log_file = log_file_path
-    
-    @classmethod
-    def log(cls, message: str):
-        """Logga meddelande med tidsstämpel"""
-        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        formatted_message = f"{timestamp} {message}"
-        
-        # Skriv till konsol
-        print(formatted_message)
-        
-        # Skriv till fil om tillgänglig
-        if cls.log_file:
-            try:
-                with open(cls.log_file, "a", encoding="utf-8") as f:
-                    f.write(f"{formatted_message}\n")
-            except Exception as e:
-                print(f"Loggningsfel: {e}")
-
-
-class MessageProcessor:
-    """Hanterar meddelandetext-bearbetning och rensning"""
-    
-    # Kontrollsymbol-mappning
-    CONTROL_CHARS = {
-        '<LF>': ' ', '<NUL>': ' ', '<GS>': ' ', '<CR>': ' ',
-        '<EM>': ' ', '<ETX>': ' ', '<ACK>': ' ', '<HT>': ' ',
-        '<BS>': ' ', '<SOH>': ' ', '<STX>': ' ', '< EOT >': ' ',
-        '<ENQ>': ' ', '<BEL>': ' ', '<VT>': ' ', '<FF>': ' ',
-        '<SO>': ' ', '<SI>': ' ', '<DLE>': ' ', '<DC1>': ' ',
-        '<DC2>': ' ', '<DC3>': ' ', '<DC4>': ' ', '<NAK>': ' ',
-        '<SYN>': ' ', '<CAN>': ' ', '<SUB>': ' ', '<ESC>': ' ',
-        '<FS>': ' ', '<RS>': ' ', '<US>': ' ', '<DEL>': ' ',
-    }
-    
-    # Svensk teckenöversättning
-    SWEDISH_TRANSLATION = str.maketrans({
-        ']': 'Å', '[': 'Ä', '\\': 'Ö',
-        '}': 'å', '{': 'ä', '|': 'ö'
-    })
-    
-    @classmethod
-    def process_message(cls, raw_message: str) -> Optional[str]:
-        """Bearbeta råmeddelande genom alla rensningssteg"""
-        if not raw_message or not raw_message.strip():
-            return None
-        
-        # Steg 1: Fixa kodning
-        processed = cls._fix_encoding(raw_message.strip())
-        
-        # Steg 2: Konvertera POCSAG specialtecken till svenska
-        processed = processed.translate(cls.SWEDISH_TRANSLATION)
-        
-        # Steg 3: Rensa kontrollsymboler
-        processed = cls._clean_control_characters(processed)
-        
-        return processed if processed else None
-    
-    @classmethod
-    def _fix_encoding(cls, text: str) -> str:
-        """Försök att fixa potentiella kodningsproblem"""
-        try:
-            return text.encode("latin1").decode("utf-8")
-        except UnicodeDecodeError:
-            return text
-    
-    @classmethod
-    def _clean_control_characters(cls, text: str) -> str:
-        """Rensa oönskade kontrollsymboler"""
-        # Ersätt kända kontrollsymbol-mönster
-        cleaned = text
-        for control_char, replacement in cls.CONTROL_CHARS.items():
-            cleaned = cleaned.replace(control_char, replacement)
-        
-        # Ta bort återstående kontrollsymboler (ASCII 0-31 och 127)
-        cleaned = re.sub(r'[\x00-\x1f\x7f]', ' ', cleaned)
-        
-        # Rensa upp multipla mellanslag
-        cleaned = re.sub(r'\s+', ' ', cleaned)
-        
-        return cleaned.strip()
-
-
-class BlacklistFilter:
-    """Hanterar blacklist-filtrering för både RIC-adresser och ord"""
-    
-    def __init__(self, blacklist_config: BlacklistConfig):
-        self.config = blacklist_config
-        Logger.log(f"Blacklist initierad: {len(self.config.addresses)} adresser, "
-                  f"{len(self.config.words)} ord, "
-                  f"skiftlägeskänslig: {self.config.case_sensitive}")
-    
-    def should_block_message(self, ric_address: str, message_content: str) -> Tuple[bool, str]:
-        """
-        Kontrollera om meddelandet ska blockeras
-        Returnerar (should_block, reason)
-        """
-        # Kontrollera RIC-adress
-        if ric_address in self.config.addresses:
-            return True, f"Blockerad RIC-adress: {ric_address}"
-        
-        # Kontrollera ord i meddelandet
-        if self.config.words:
-            search_text = message_content if self.config.case_sensitive else message_content.lower()
-            search_words = self.config.words if self.config.case_sensitive else {word.lower() for word in self.config.words}
-            
-            for blocked_word in search_words:
-                if blocked_word in search_text:
-                    return True, f"Blockerat ord: '{blocked_word}'"
-        
-        return False, ""
-    
-    def update_config(self, blacklist_config: BlacklistConfig):
-        """Uppdatera blacklist-konfiguration"""
-        self.config = blacklist_config
-        Logger.log(f"Blacklist uppdaterad: {len(self.config.addresses)} adresser, "
-                  f"{len(self.config.words)} ord")
-
-
-class EmailDeduplicator:
-    """Hanterar e-post-avduplicering för att förhindra spam"""
-    
-    def __init__(self, cooldown_seconds: int = 600, auto_cleanup_minutes: int = 10):
-        self.cooldown = cooldown_seconds
-        self.auto_cleanup_interval = auto_cleanup_minutes * 60
-        self.cache: Dict[str, float] = {}
-        self.last_cleanup = time.time()
-        self._start_auto_cleanup()
-    
-    def should_send(self, message_text: str) -> bool:
-        """Kontrollera om e-post ska skickas baserat på avdupliceringsregler"""
-        current_time = time.time()
-        
-        # Kontrollera om det är dags för automatisk rensning
-        self._check_auto_cleanup(current_time)
-        
-        # Extrahera Alpha-innehållet för jämförelse (ta bort tidsstämpel)
-        alpha_content = self._extract_alpha_content(message_text)
-        if not alpha_content:
-            # Om inget Alpha-innehåll finns, använd hela meddelandet
-            alpha_content = message_text
-        
-        message_hash = hashlib.md5(alpha_content.encode('utf-8')).hexdigest()
-        
-        # Rensa gamla poster
-        self._clean_cache(current_time)
-        
-        # Kontrollera om meddelandet skickades nyligen
-        if message_hash in self.cache:
-            time_diff = current_time - self.cache[message_hash]
-            if time_diff < self.cooldown:
-                Logger.log(f"Email blockerad - dublett inom {self.cooldown/60:.1f} minuter (Alpha: '{alpha_content[:50]}...')")
-                return False
-        
-        # Uppdatera cache
-        self.cache[message_hash] = current_time
-        Logger.log(f"Email tillåten - nytt Alpha-innehåll (hash: {message_hash[:8]})")
-        return True
-    
-    def _extract_alpha_content(self, message_text: str) -> str:
-        """Extrahera Alpha-innehållet från meddelandet för dubblettjämförelse"""
-        # Ta bort tidsstämpel från början av meddelandet
-        # Format: "[2025-06-28 12:01:47] ..."
-        cleaned_message = re.sub(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]\s*', '', message_text)
-        
-        # Om meddelandet innehåller "Alpha:", använd bara Alpha-delen
-        if "Alpha:" in cleaned_message:
-            alpha_content = cleaned_message.split("Alpha:", 1)[1].strip()
-            return alpha_content
-        
-        # Annars använd hela det rensade meddelandet
-        return cleaned_message
-    
-    def clear_cache(self):
-        """Rensa hela cachen"""
-        self.cache.clear()
-        self.last_cleanup = time.time()
-        Logger.log("Email-cache rensad")
-    
-    def _start_auto_cleanup(self):
-        """Starta automatisk rensnings-tråd"""
-        def cleanup_thread():
-            while True:
-                time.sleep(60)
-                current_time = time.time()
-                self._check_auto_cleanup(current_time)
-        
-        cleanup_thread = threading.Thread(target=cleanup_thread, daemon=True)
-        cleanup_thread.start()
-        Logger.log(f"Automatisk email-cache rensning startad (var {self.auto_cleanup_interval/60:.0f}:e minut)")
-    
-    def _check_auto_cleanup(self, current_time: float):
-        """Kontrollera om automatisk rensning ska utföras"""
-        if current_time - self.last_cleanup >= self.auto_cleanup_interval:
-            self.clear_cache()
-            Logger.log("Automatisk email-cache rensning utförd")
-    
-    def _clean_cache(self, current_time: float):
-        """Ta bort utgångna poster från cache"""
-        expired_keys = [key for key, timestamp in self.cache.items() 
-                       if current_time - timestamp > self.cooldown]
-        for key in expired_keys:
-            del self.cache[key]
-
-
-class CoordinateConverter:
-    """Hanterar koordinatkonvertering från RT90 till WGS84"""
-    
-    def __init__(self):
-        self.transformer = Transformer.from_crs("EPSG:3021", "EPSG:4326", always_xy=True)
-    
-    def rt90_to_wgs84(self, x: int, y: int) -> Tuple[float, float]:
-        """Konvertera RT90-koordinater till WGS84"""
-        lon, lat = self.transformer.transform(y, x)
-        return round(lat, 6), round(lon, 6)
-
-
-class EmailSender:
-    """Hanterar e-post-sändningsfunktionalitet"""
-    
-    def __init__(self, email_config: EmailConfig, deduplicator: EmailDeduplicator, 
-                 coordinate_converter: CoordinateConverter):
-        self.config = email_config
-        self.deduplicator = deduplicator
-        self.coord_converter = coordinate_converter
-    
-    def send_message(self, subject: str, message_content: str):
-        """Skicka e-post med avduplicering-kontroll till flera mottagare"""
-        try:
-            if not self.config.ENABLED:
-                Logger.log("E-post är avstängd.")
-                return
-            
-            if not self.config.RECEIVERS:
-                Logger.log("Inga e-postmottagare konfigurerade.")
-                return
-            
-            # Kontrollera avduplicering baserat på meddelandeinnehållet
-            if not self.deduplicator.should_send(message_content):
-                return
-            
-            # Skapa e-post
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = self.config.SENDER
-            msg["Bcc"] = ", ".join(self.config.RECEIVERS)
-            
-            # Lägg till kartlänk om koordinater hittades
-            map_link = self._create_map_link(message_content)
-            content = f"Meddelande:\n\n{message_content}{map_link}"
-            msg.set_content(content)
-            
-            # Skicka e-post
-            with smtplib.SMTP_SSL(self.config.SMTP_SERVER, int(self.config.SMTP_PORT)) as smtp:
-                smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
-                smtp.send_message(msg)
-            
-            alpha_content = message_content.split(" Alpha:", 1)[-1].strip() if " Alpha:" in message_content else message_content
-            Logger.log(f"E-post skickad till {len(self.config.RECEIVERS)} mottagare för: '{alpha_content}'")
-            
-        except Exception as e:
-            Logger.log(f"E-postfel: {e}")
-    
-    def send_test_email(self) -> str:
-        """Skicka test-e-post till alla mottagare och returnera resultatmeddelande"""
-        try:
-            if not self.config.RECEIVERS:
-                return "Inga e-postmottagare konfigurerade."
-            
-            msg = EmailMessage()
-            msg["Subject"] = "Testmail från POCSAG-systemet"
-            msg["From"] = self.config.SENDER
-            msg["Bcc"] = ", ".join(self.config.RECEIVERS)
-            
-            content = f"Detta är ett testmeddelande.\n\nSkickat till {len(self.config.RECEIVERS)} mottagare:\n"
-            for i, receiver in enumerate(self.config.RECEIVERS, 1):
-                content += f"{i}. {receiver}\n"
-            
-            msg.set_content(content)
-            
-            with smtplib.SMTP_SSL(self.config.SMTP_SERVER, int(self.config.SMTP_PORT)) as smtp:
-                smtp.login(self.config.SENDER, self.config.APP_PASSWORD)
-                smtp.send_message(msg)
-            
-            success_msg = f"Testmail skickades OK till {len(self.config.RECEIVERS)} mottagare."
-            Logger.log(success_msg)
-            return success_msg
-            
-        except Exception as e:
-            error_msg = f"Fel vid testmail: {e}"
-            Logger.log(error_msg)
-            return error_msg
-    
-    def _create_map_link(self, message_content: str) -> str:
-        """Skapa kartlänk från koordinater i meddelande"""
-        match = re.search(r'X=(\d+)\s+Y=(\d+)', message_content)
-        if not match:
-            return ""
-        
-        x, y = int(match.group(1)), int(match.group(2))
-        lat, lon = self.coord_converter.rt90_to_wgs84(x, y)
-        return f"\nKarta: https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}"
-
-
-class MessageHandler:
-    """Hanterar meddelanderoutning och lagring"""
-    
-    def __init__(self, file_manager: FileManager, email_sender: EmailSender):
-        self.file_manager = file_manager
-        self.email_sender = email_sender
-        self.all_messages: List[str] = []
-        self.filtered_messages: List[str] = []
-        self.message_counter = 0
-        self.last_message_hash = ""
-    
-    def handle_message(self, processed_message: str, ric_address: str, filter_addresses: Set[str]):
-        """Hantera ett bearbetat meddelande"""
-        # Förhindra dubblettbearbetning
-        timestamp = datetime.now().strftime("[%Y-%m-%d %H:%M:%S]")
-        message_hash = f"{timestamp} {processed_message}"
-        if message_hash == self.last_message_hash:
-            return
-        self.last_message_hash = message_hash
-        
-        timestamped_message = f"{timestamp} {processed_message}"
-        
-        # Lägg till i alla meddelanden
-        self.all_messages.insert(0, timestamped_message)
-        self._append_to_file(self.file_manager.log_file_all, timestamped_message)
-        
-        # Kontrollera om det ska filtreras
-        if ric_address in filter_addresses:
-            self.filtered_messages.insert(0, timestamped_message)
-            self._append_to_file(self.file_manager.log_file_filtered, timestamped_message)
-            
-            # Skicka e-post om Alpha-innehåll
-            self._handle_alpha_content(processed_message, timestamp)
-        
-        # Håll listorna hanterbara
-        self.all_messages = self.all_messages[:50]
-        self.filtered_messages = self.filtered_messages[:50]
-        self.message_counter += 1
-    
-    def clear_logs(self):
-        """Rensa alla meddelandeloggar"""
-        self.file_manager.log_file_all.write_text("", encoding="utf-8")
-        self.file_manager.log_file_filtered.write_text("", encoding="utf-8")
-        self.all_messages.clear()
-        self.filtered_messages.clear()
-        Logger.log("Loggfiler rensades.")
-    
-    def _handle_alpha_content(self, processed_message: str, timestamp: str):
-        """Hantera Alpha-innehåll för e-post-sändning"""
-        if "Alpha:" in processed_message:
-            alpha_content = processed_message.split("Alpha:", 1)[1].strip()
-            email_subject = "Pocsag Larm - Rix"
-            full_message = f"{timestamp} {alpha_content}"
-            self.email_sender.send_message(email_subject, full_message)
-    
-    def _append_to_file(self, file_path: Path, content: str):
-        """Lägg till innehåll i fil"""
-        try:
-            with open(file_path, "a", encoding="utf-8") as f:
-                f.write(f"{content}\n")
-        except Exception as e:
-            Logger.log(f"Fel vid skrivning till {file_path}: {e}")
-
-
-class DecoderManager:
-    """Hanterar RTL-SDR och multimon-ng-processer"""
-    
-    def __init__(self, message_handler: MessageHandler, blacklist_filter: BlacklistFilter):
-        self.message_handler = message_handler
-        self.blacklist_filter = blacklist_filter
-        self.rtl_proc: Optional[subprocess.Popen] = None
-        self.decoder_proc: Optional[subprocess.Popen] = None
-        self.filter_addresses: Set[str] = set()
-    
-    def start_decoder(self, frequency: str):
-        """Starta RTL-SDR och avkodare-processer"""
-        self.stop_decoder()
-        Logger.log(f"Startar dekoder på frekvens: {frequency}")
-        
-        rtl_cmd = ["rtl_fm", "-f", frequency, "-M", "fm", "-s", "22050", "-g", "49", "-p", "0"]
-        multimon_cmd = ["multimon-ng", "-t", "raw", "-a", "POCSAG512", "-a", "POCSAG1200", "-f", "alpha", "-"]
-        
-        try:
-            self.rtl_proc = subprocess.Popen(rtl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.decoder_proc = subprocess.Popen(
-                multimon_cmd, 
-                stdin=self.rtl_proc.stdout, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Starta läsnings-tråd
-            threading.Thread(target=self._read_loop, daemon=True).start()
-            
-        except Exception as e:
-            Logger.log(f"Fel vid start av dekoder: {e}")
-    
-    def stop_decoder(self):
-        """Stoppa alla avkodare-processer"""
-        for proc in [self.decoder_proc, self.rtl_proc]:
-            if proc and proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                except Exception as e:
-                    Logger.log(f"Fel vid stopning av process: {e}")
-        
-        self.decoder_proc = None
-        self.rtl_proc = None
-    
-    def update_filter_addresses(self, filter_addresses: Set[str]):
-        """Uppdatera filteradresser"""
-        self.filter_addresses = filter_addresses
-    
-    def update_blacklist(self, blacklist_filter: BlacklistFilter):
-        """Uppdatera blacklist-filter"""
-        self.blacklist_filter = blacklist_filter
-    
-    def _read_loop(self):
-        """Huvudloop för läsning av avkodare-utdata"""
-        if not self.decoder_proc:
-            return
-        
-        try:
-            for raw_line in self.decoder_proc.stdout:
-                processed_message = MessageProcessor.process_message(raw_line)
-                if not processed_message:
-                    continue
-                
-                # Extrahera RIC-adress
-                match = re.search(r"Address:\s*(\d+)", processed_message)
-                if not match:
-                    continue
-                
-                ric_address = match.group(1)
-                
-                # Kontrollera blacklist (både RIC-adress och ord)
-                should_block, block_reason = self.blacklist_filter.should_block_message(
-                    ric_address, processed_message
-                )
-                if should_block:
-                    Logger.log(f"Meddelande blockerat: {block_reason}")
-                    continue
-                
-                # Hantera meddelandet
-                self.message_handler.handle_message(
-                    processed_message, ric_address, self.filter_addresses
-                )
-                
-        except Exception as e:
-            Logger.log(f"Fel i läsloop: {e}")
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 class POCSAGApp:
-    """Huvudapplikationsklass"""
+    """Huvudapplikationsklass som samordnar alla komponenter"""
     
     def __init__(self):
-        # Initialisera komponenter
+        """Initialisera alla komponenter i ratt ordning"""
+        
         self.file_manager = FileManager()
         self.file_manager.initialize_files()
         
-        # Sätt upp loggning
         Logger.set_log_file(self.file_manager.log_file_logging)
+        Logger.log("POCSAG 2025-system startar...")
         
-        # Ladda konfiguration
         self.config = self.file_manager.load_config()
         self.current_freq = self.config.get("frequency", "161.4375M")
         self.filter_addresses = set(self.config.get("filters", []))
         
-        # Initialisera blacklist
+        self.auth_config = self.file_manager.load_auth_config()
+        self.session_manager = SessionManager()
+        
         self.blacklist_config = self.file_manager.load_blacklist()
         self.blacklist_filter = BlacklistFilter(self.blacklist_config)
         
-        # Initialisera e-post-komponenter
         email_config_dict = self.config.get("email", {})
         if "RECEIVERS" not in email_config_dict and "RECEIVER" in email_config_dict:
             email_config_dict["RECEIVERS"] = [email_config_dict["RECEIVER"]] if email_config_dict["RECEIVER"] else []
+        
+        if "SUBJECT" not in email_config_dict:
+            email_config_dict["SUBJECT"] = "Pocsag Larm - Rix"
         
         self.email_config = EmailConfig(**email_config_dict)
         self.email_deduplicator = EmailDeduplicator()
@@ -648,64 +67,226 @@ class POCSAGApp:
             self.email_config, self.email_deduplicator, self.coordinate_converter
         )
         
-        # Initialisera meddelandehantering
         self.message_handler = MessageHandler(self.file_manager, self.email_sender)
         
-        # Initialisera avkodare
         self.decoder_manager = DecoderManager(self.message_handler, self.blacklist_filter)
         self.decoder_manager.update_filter_addresses(self.filter_addresses)
         
-        # Initialisera Flask-app
         self.app = Flask(__name__)
+        self.app.secret_key = secrets.token_hex(32)
         self._setup_routes()
+        
+        Logger.log("Alla komponenter initialiserade framgangsrikt")
     
     def _setup_routes(self):
-        """Sätt upp Flask-rutter"""
-        self.app.add_url_rule("/", "index", self.index)
-        self.app.add_url_rule("/setfreq", "setfreq", self.setfreq, methods=["POST"])
-        self.app.add_url_rule("/setfilters", "setfilters", self.setfilters, methods=["POST"])
-        self.app.add_url_rule("/messages", "messages", self.messages)
-        self.app.add_url_rule("/clear_logs", "clear_logs", self.clear_logs, methods=["POST"])
-        self.app.add_url_rule("/download_all", "download_all", self.download_all)
-        self.app.add_url_rule("/download_filtered", "download_filtered", self.download_filtered)
-        self.app.add_url_rule("/email", "email_settings", self.email_settings, methods=["GET", "POST"])
-        self.app.add_url_rule("/blacklist", "blacklist_settings", self.blacklist_settings, methods=["GET", "POST"])
+        """Satt upp alla Flask-rutter"""
+        self.app.add_url_rule("/login", "login", self.login, methods=["GET", "POST"])
+        self.app.add_url_rule("/logout", "logout", self.logout, methods=["POST"])
+        self.app.add_url_rule("/setup", "setup", self.setup, methods=["GET", "POST"])
+        
+        self.app.add_url_rule("/", "index", require_auth(self.index))
+        self.app.add_url_rule("/setfreq", "setfreq", require_auth(self.setfreq), methods=["POST"])
+        self.app.add_url_rule("/setfilters", "setfilters", require_auth(self.setfilters), methods=["POST"])
+        self.app.add_url_rule("/messages", "messages", require_auth(self.messages))
+        self.app.add_url_rule("/clear_logs", "clear_logs", require_auth(self.clear_logs), methods=["POST"])
+        self.app.add_url_rule("/download_all", "download_all", require_auth(self.download_all))
+        self.app.add_url_rule("/download_filtered", "download_filtered", require_auth(self.download_filtered))
+        self.app.add_url_rule("/email", "email_settings", require_auth(self.email_settings), methods=["GET", "POST"])
+        self.app.add_url_rule("/blacklist", "blacklist_settings", require_auth(self.blacklist_settings), methods=["GET", "POST"])
+        self.app.add_url_rule("/auth_settings", "auth_settings", require_auth(self.auth_settings), methods=["GET", "POST"])
     
     def run(self):
-        """Starta applikationen"""
-        Logger.log(f"Startar POCSAG på {self.current_freq}")
+        """Starta hela systemet"""
+        if not self.auth_config.password_hash:
+            Logger.log("VARNING: Inget losenord ar satt! Besok /setup for att satta upp autentisering.")
+        
+        Logger.log(f"Startar POCSAG-avkodning pa frekvens {self.current_freq}")
         self.decoder_manager.start_decoder(self.current_freq)
+        
+        Logger.log("Startar webbserver pa http://0.0.0.0:5000")
         self.app.run(host="0.0.0.0", port=5000, debug=False)
     
-    # Flask-rutthanterare
+    def login(self):
+        """Hantera inloggningssida och inloggningsforsok"""
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            ip_address = request.environ.get('REMOTE_ADDR', 'unknown')
+            
+            if self.session_manager.is_locked_out(
+                ip_address, 
+                self.auth_config.max_login_attempts, 
+                self.auth_config.lockout_minutes
+            ):
+                flash(f'For manga misslyckade forsok. Forsok igen om {self.auth_config.lockout_minutes} minuter.', 'error')
+                Logger.log(f"Inloggning blockerad for IP {ip_address} - for manga forsok")
+                return render_template_string(LOGIN_TEMPLATE)
+            
+            if (username == self.auth_config.username and 
+                self.auth_config.check_password(password)):
+                
+                session['authenticated'] = True
+                session['username'] = username
+                session['login_time'] = datetime.now().isoformat()
+                session['timeout_hours'] = self.auth_config.session_timeout_hours
+                
+                self.session_manager.clear_attempts(ip_address)
+                Logger.log(f"Lyckad inloggning for anvandare '{username}' fran IP {ip_address}")
+                
+                return redirect(url_for('index'))
+            else:
+                self.session_manager.record_failed_attempt(ip_address)
+                flash('Felaktigt anvandarnamn eller losenord.', 'error')
+                Logger.log(f"Misslyckad inloggning for anvandare '{username}' fran IP {ip_address}")
+        
+        return render_template_string(LOGIN_TEMPLATE)
+    
+    def logout(self):
+        """Logga ut anvandare och rensa session"""
+        username = session.get('username', 'okand')
+        session.clear()
+        flash('Du har loggats ut.', 'info')
+        Logger.log(f"Anvandare '{username}' loggade ut")
+        return redirect(url_for('login'))
+    
+    def setup(self):
+        """Forsta gangens-setup for att satta losenord"""
+        if self.auth_config.password_hash:
+            return redirect(url_for('login'))
+        
+        if request.method == "POST":
+            username = request.form.get("username", "").strip()
+            password = request.form.get("password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            
+            if not username or len(username) < 3:
+                flash('Anvandarnamn maste vara minst 3 tecken.', 'error')
+            elif not password or len(password) < 6:
+                flash('Losenord maste vara minst 6 tecken.', 'error')
+            elif password != confirm_password:
+                flash('Losenorden matchar inte.', 'error')
+            else:
+                self.auth_config.username = username
+                self.auth_config.set_password(password)
+                
+                self.config["auth"] = {
+                    "username": self.auth_config.username,
+                    "password_hash": self.auth_config.password_hash,
+                    "session_timeout_hours": self.auth_config.session_timeout_hours,
+                    "max_login_attempts": self.auth_config.max_login_attempts,
+                    "lockout_minutes": self.auth_config.lockout_minutes
+                }
+                self.file_manager.save_config(self.config)
+                
+                Logger.log(f"Forsta setup slutford for anvandare '{username}'")
+                flash('Konto skapat! Du kan nu logga in.', 'success')
+                return redirect(url_for('login'))
+        
+        return render_template_string(SETUP_TEMPLATE)
+    
+    def auth_settings(self):
+        """Hantera autentiseringsinstallningar"""
+        message = ""
+        if request.method == "POST":
+            action = request.form.get("action")
+            
+            if action == "change_password":
+                current_password = request.form.get("current_password", "")
+                new_password = request.form.get("new_password", "")
+                confirm_password = request.form.get("confirm_password", "")
+                
+                if not self.auth_config.check_password(current_password):
+                    message = "Felaktigt nuvarande losenord."
+                elif len(new_password) < 6:
+                    message = "Nytt losenord maste vara minst 6 tecken."
+                elif new_password != confirm_password:
+                    message = "Losenorden matchar inte."
+                else:
+                    self.auth_config.set_password(new_password)
+                    self.config["auth"]["password_hash"] = self.auth_config.password_hash
+                    self.file_manager.save_config(self.config)
+                    message = "Losenord andrat!"
+                    Logger.log("Losenord andrat av anvandare")
+            
+            elif action == "update_settings":
+                try:
+                    new_username = request.form.get("username", "").strip()
+                    timeout_hours = int(request.form.get("timeout_hours", 24))
+                    max_attempts = int(request.form.get("max_attempts", 5))
+                    lockout_minutes = int(request.form.get("lockout_minutes", 15))
+                    
+                    if len(new_username) < 3:
+                        message = "Anvandarnamn maste vara minst 3 tecken."
+                    elif timeout_hours < 1 or timeout_hours > 168:
+                        message = "Session timeout maste vara mellan 1-168 timmar."
+                    elif max_attempts < 3 or max_attempts > 20:
+                        message = "Max inloggningsforsok maste vara mellan 3-20."
+                    elif lockout_minutes < 5 or lockout_minutes > 1440:
+                        message = "Lockout-tid maste vara mellan 5-1440 minuter."
+                    else:
+                        self.auth_config.username = new_username
+                        self.auth_config.session_timeout_hours = timeout_hours
+                        self.auth_config.max_login_attempts = max_attempts
+                        self.auth_config.lockout_minutes = lockout_minutes
+                        
+                        self.config["auth"].update({
+                            "username": new_username,
+                            "session_timeout_hours": timeout_hours,
+                            "max_login_attempts": max_attempts,
+                            "lockout_minutes": lockout_minutes
+                        })
+                        self.file_manager.save_config(self.config)
+                        
+                        if session.get('username') != new_username:
+                            session['username'] = new_username
+                        
+                        message = "Installningar uppdaterade!"
+                        Logger.log("Autentiseringsinstallningar uppdaterade")
+                
+                except ValueError:
+                    message = "Ogiltiga numeriska varden."
+        
+        return render_template_string(
+            AUTH_SETTINGS_TEMPLATE,
+            auth_config=self.auth_config,
+            msg=message
+        )
+    
     def index(self):
+        """Huvudsida med meddelanden och kontroller"""
         filters_display = "\n".join(self.filter_addresses)
         return render_template_string(
             MAIN_HTML_TEMPLATE,
             messages=self.message_handler.all_messages,
             filtered=self.message_handler.filtered_messages,
             freq=self.current_freq,
-            filters=filters_display
+            filters=filters_display,
+            username=session.get('username', 'Anvandare')
         )
     
     def setfreq(self):
+        """Satt ny frekvens for POCSAG-mottagning"""
         freq = request.form.get("freq", "").strip()
         if freq:
             self.current_freq = freq + "M"
             self.config["frequency"] = self.current_freq
             self.file_manager.save_config(self.config)
             self.decoder_manager.start_decoder(self.current_freq)
+            Logger.log(f"Frekvens andrad till {self.current_freq}")
         return redirect("/")
     
     def setfilters(self):
+        """Uppdatera RIC-filteradresser"""
         filters = request.form.get("filters", "")
         self.filter_addresses = set(f.strip() for f in filters.splitlines() if f.strip())
         self.config["filters"] = list(self.filter_addresses)
         self.file_manager.save_config(self.config)
         self.decoder_manager.update_filter_addresses(self.filter_addresses)
+        Logger.log(f"Filteradresser uppdaterade: {len(self.filter_addresses)} adresser")
         return redirect("/")
     
     def messages(self):
+        """API-endpoint for att hamta meddelanden via AJAX"""
         return jsonify({
             "counter": self.message_handler.message_counter,
             "filtered": self.message_handler.filtered_messages,
@@ -713,10 +294,13 @@ class POCSAGApp:
         })
     
     def clear_logs(self):
+        """Rensa alla meddelandeloggar"""
         self.message_handler.clear_logs()
+        Logger.log("Meddelandeloggar rensade av anvandare")
         return redirect("/")
     
     def download_all(self):
+        """Ladda ner alla meddelanden som fil"""
         return send_file(
             self.file_manager.log_file_all,
             as_attachment=True,
@@ -724,6 +308,7 @@ class POCSAGApp:
         )
     
     def download_filtered(self):
+        """Ladda ner filtrerade meddelanden som fil"""
         return send_file(
             self.file_manager.log_file_filtered,
             as_attachment=True,
@@ -731,17 +316,17 @@ class POCSAGApp:
         )
     
     def email_settings(self):
+        """Hantera e-postinstallningar"""
         message = ""
         if request.method == "POST":
             action = request.form.get("action")
             
-            # Uppdatera e-post-konfiguration
             self.email_config.SMTP_SERVER = request.form.get("smtp_server", "").strip()
             self.email_config.SMTP_PORT = request.form.get("smtp_port", "").strip()
             self.email_config.SENDER = request.form.get("sender", "").strip()
             self.email_config.APP_PASSWORD = request.form.get("app_password", "").strip()
+            self.email_config.SUBJECT = request.form.get("subject", "").strip() or "Pocsag Larm - Rix"
             
-            # Hantera flera mottagare
             receivers_input = request.form.get("receivers", "").strip()
             if receivers_input:
                 receivers = []
@@ -756,21 +341,22 @@ class POCSAGApp:
             
             self.email_config.ENABLED = request.form.get("enabled") == "on"
             
-            # Spara till konfiguration
             self.config["email"] = {
                 "SMTP_SERVER": self.email_config.SMTP_SERVER,
                 "SMTP_PORT": self.email_config.SMTP_PORT,
                 "SENDER": self.email_config.SENDER,
                 "APP_PASSWORD": self.email_config.APP_PASSWORD,
                 "RECEIVERS": self.email_config.RECEIVERS,
-                "ENABLED": self.email_config.ENABLED
+                "ENABLED": self.email_config.ENABLED,
+                "SUBJECT": self.email_config.SUBJECT
             }
             self.file_manager.save_config(self.config)
             
             if action == "test":
                 message = self.email_sender.send_test_email()
             elif action == "save":
-                message = f"Inställningar sparade med {len(self.email_config.RECEIVERS)} mottagare."
+                message = f"Installningar sparade med {len(self.email_config.RECEIVERS)} mottagare."
+                Logger.log(f"E-postinstallningar uppdaterade: {len(self.email_config.RECEIVERS)} mottagare")
         
         return render_template_string(
             EMAIL_SETTINGS_TEMPLATE,
@@ -779,14 +365,13 @@ class POCSAGApp:
         )
     
     def blacklist_settings(self):
+        """Hantera blacklist-installningar"""
         message = ""
         if request.method == "POST":
-            # Uppdatera blacklist-konfiguration
             addresses_input = request.form.get("addresses", "").strip()
             words_input = request.form.get("words", "").strip()
             case_sensitive = request.form.get("case_sensitive") == "on"
             
-            # Bearbeta adresser
             addresses = set()
             if addresses_input:
                 for line in addresses_input.splitlines():
@@ -794,7 +379,6 @@ class POCSAGApp:
                     if addr.isdigit():
                         addresses.add(addr)
             
-            # Bearbeta ord
             words = set()
             if words_input:
                 for line in words_input.splitlines():
@@ -802,14 +386,12 @@ class POCSAGApp:
                     if word:
                         words.add(word)
             
-            # Uppdatera konfiguration
-            self.blacklist_config = BlacklistConfig(
+            self.blacklist_config = self.blacklist_config.__class__(
                 addresses=addresses,
                 words=words,
                 case_sensitive=case_sensitive
             )
             
-            # Spara till fil
             self.config["blacklist"] = {
                 "addresses": list(addresses),
                 "words": list(words),
@@ -817,7 +399,6 @@ class POCSAGApp:
             }
             self.file_manager.save_config(self.config)
             
-            # Uppdatera filter i decoder
             self.blacklist_filter.update_config(self.blacklist_config)
             self.decoder_manager.update_blacklist(self.blacklist_filter)
             
@@ -834,22 +415,359 @@ class POCSAGApp:
 
 
 # HTML-mallar
+LOGIN_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Logga in - POCSAG 2025</title>
+<style>
+body { 
+  font-family: Arial, sans-serif; 
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 20px;
+}
+.login-container {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  width: 100%;
+  max-width: 400px;
+}
+h1 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 30px;
+  font-size: 28px;
+}
+.form-group {
+  margin-bottom: 20px;
+}
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: #555;
+  font-weight: 500;
+}
+input[type="text"], input[type="password"] {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 16px;
+  box-sizing: border-box;
+}
+button {
+  width: 100%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.alert {
+  padding: 12px;
+  margin-bottom: 20px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.alert-error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+.setup-link {
+  text-align: center;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+.setup-link a {
+  color: #667eea;
+  text-decoration: none;
+  font-weight: 500;
+}
+</style></head><body>
+
+<div class="login-container">
+  <h1>POCSAG 2025</h1>
+  
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert alert-error">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+  <form method="POST">
+    <div class="form-group">
+      <label for="username">Användarnamn:</label>
+      <input type="text" id="username" name="username" required>
+    </div>
+    
+    <div class="form-group">
+      <label for="password">Lösenord:</label>
+      <input type="password" id="password" name="password" required>
+    </div>
+    
+    <button type="submit">Logga in</button>
+  </form>
+  
+  <div class="setup-link">
+    <small>Första gången? <a href="/setup">Sätt upp ditt konto här</a></small>
+  </div>
+</div>
+
+</body></html>
+"""
+
+SETUP_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Setup - POCSAG 2025</title>
+<style>
+body { 
+  font-family: Arial, sans-serif; 
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 20px;
+}
+.setup-container {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+  width: 100%;
+  max-width: 450px;
+}
+h1 {
+  text-align: center;
+  color: #333;
+  margin-bottom: 30px;
+  font-size: 28px;
+}
+.form-group {
+  margin-bottom: 20px;
+}
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: #555;
+  font-weight: 500;
+}
+input[type="text"], input[type="password"] {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 16px;
+  box-sizing: border-box;
+}
+button {
+  width: 100%;
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  padding: 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.alert {
+  padding: 12px;
+  margin-bottom: 20px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.alert-error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+.alert-success {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+.help-text {
+  font-size: 12px;
+  color: #666;
+  margin-top: 5px;
+}
+</style></head><body>
+
+<div class="setup-container">
+  <h1>Första setup</h1>
+  
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      {% for message in messages %}
+        <div class="alert {% if 'skapat' in message %}alert-success{% else %}alert-error{% endif %}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  
+  <form method="POST">
+    <div class="form-group">
+      <label for="username">Användarnamn:</label>
+      <input type="text" id="username" name="username" required>
+      <div class="help-text">Minst 3 tecken</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="password">Lösenord:</label>
+      <input type="password" id="password" name="password" required>
+      <div class="help-text">Minst 6 tecken</div>
+    </div>
+    
+    <div class="form-group">
+      <label for="confirm_password">Bekräfta lösenord:</label>
+      <input type="password" id="confirm_password" name="confirm_password" required>
+    </div>
+    
+    <button type="submit">Skapa konto</button>
+  </form>
+</div>
+
+</body></html>
+"""
+
+AUTH_SETTINGS_TEMPLATE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Säkerhet - POCSAG 2025</title>
+<style>
+body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; }
+h1 { color: #333; text-align: center; }
+.form-container { background: #fff; padding: 30px; border-radius: 8px; margin-bottom: 20px; }
+.form-group { margin-bottom: 20px; }
+label { display: block; margin-bottom: 8px; font-weight: bold; }
+input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; width: 100%; }
+.message { padding: 15px; margin-bottom: 20px; border-radius: 4px; font-weight: bold; }
+.message.success { background: #d4edda; color: #155724; }
+.message.error { background: #f8d7da; color: #721c24; }
+.back-link { color: #007bff; text-decoration: none; }
+</style></head><body>
+
+<div class="container">
+  <h1>Säkerhetsinställningar</h1>
+  
+  {% if msg %}
+    <div class="message {% if 'ändrat' in msg or 'uppdaterade' in msg %}success{% else %}error{% endif %}">
+      {{ msg }}
+    </div>
+  {% endif %}
+  
+  <div class="form-container">
+    <h3>Ändra lösenord</h3>
+    <form method="POST">
+      <input type="hidden" name="action" value="change_password">
+      <div class="form-group">
+        <label>Nuvarande lösenord:</label>
+        <input type="password" name="current_password" required>
+      </div>
+      <div class="form-group">
+        <label>Bekräfta lösenord:</label>
+        <input type="password" name="confirm_password" required>
+      </div>
+      <button type="submit">Ändra lösenord</button>
+    </form>
+  </div>
+  
+  <div class="form-container">
+    <h3>Allmänna inställningar</h3>
+    <form method="POST">
+      <input type="hidden" name="action" value="update_settings">
+      <div class="form-group">
+        <label>Användarnamn:</label>
+        <input type="text" name="username" value="{{ auth_config.username }}" required>
+      </div>
+      <div class="form-group">
+        <label>Session timeout (timmar):</label>
+        <input type="number" name="timeout_hours" value="{{ auth_config.session_timeout_hours }}" min="1" max="168" required>
+      </div>
+      <div class="form-group">
+        <label>Max inloggningsförsök:</label>
+        <input type="number" name="max_attempts" value="{{ auth_config.max_login_attempts }}" min="3" max="20" required>
+      </div>
+      <div class="form-group">
+        <label>Blockering (minuter):</label>
+        <input type="number" name="lockout_minutes" value="{{ auth_config.lockout_minutes }}" min="5" max="1440" required>
+      </div>
+      <button type="submit">Spara inställningar</button>
+    </form>
+  </div>
+  
+  <a href="/" class="back-link">← Tillbaka till startsidan</a>
+</div>
+
+</body></html>
+"""
+
 MAIN_HTML_TEMPLATE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>POCSAG 2025 - By SA7BNB</title>
 <style>
-body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #e9eef4; padding: 20px; }
-h1 { color: #003366; }
-form { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 0 8px rgba(0,0,0,0.1); }
-input, textarea, select { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
-button { background-color: #0078D7; color: white; padding: 10px 18px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
-button:hover { background-color: #005a9e; }
-.message { background: #fefefe; border-left: 5px solid #0078D7; padding: 10px; margin-bottom: 5px; font-family: monospace; word-break: break-word; }
+body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+h1 { color: #333; }
+.header { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  margin-bottom: 20px;
+  background: #fff;
+  padding: 15px 20px;
+  border-radius: 8px;
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.logout-btn {
+  background-color: #dc3545;
+  color: white;
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.auth-link {
+  background-color: #6c757d;
+  color: white;
+  padding: 8px 15px;
+  border: none;
+  border-radius: 4px;
+  text-decoration: none;
+  margin-right: 10px;
+}
+form { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+input, textarea { width: 100%; padding: 10px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px; }
+button { background-color: #007bff; color: white; padding: 10px 18px; border: none; border-radius: 4px; cursor: pointer; }
+.message { background: #fff; border-left: 5px solid #007bff; padding: 10px; margin-bottom: 5px; font-family: monospace; }
 .inline { display: inline-block; margin-right: 10px; }
 .section { margin-bottom: 30px; }
-h2 { color: #003366; border-bottom: 2px solid #0078D7; padding-bottom: 5px; }
+h2 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 5px; }
 </style></head><body>
 
-<h1>POCSAG 2025 - By SA7BNB</h1>
+<div class="header">
+  <h1>POCSAG 2025 - By SA7BNB</h1>
+  <div class="user-info">
+    <span>👤 {{ username }}</span>
+    <a href="/auth_settings" class="auth-link">🔐 Säkerhet</a>
+    <form method="POST" action="/logout" style="margin:0;">
+      <button type="submit" class="logout-btn" onclick="return confirm('Är du säker på att du vill logga ut?')">Logga ut</button>
+    </form>
+  </div>
+</div>
 
 <div class="section">
 <form method="POST" action="/setfreq">
@@ -862,7 +780,7 @@ h2 { color: #003366; border-bottom: 2px solid #0078D7; padding-bottom: 5px; }
 <div class="section">
 <form method="POST" action="/setfilters">
   <label><strong>Filteradresser (RIC):</strong></label>
-  <textarea name="filters" rows="3" placeholder="En adress per rad, t.ex:&#10;123456&#10;789012">{{ filters }}</textarea>
+  <textarea name="filters" rows="3" placeholder="En adress per rad">{{ filters }}</textarea>
   <button type="submit">Uppdatera Filter</button>
 </form>
 </div>
@@ -880,7 +798,7 @@ h2 { color: #003366; border-bottom: 2px solid #0078D7; padding-bottom: 5px; }
 <form method="GET" action="/download_all" class="inline">
   <button type="submit">Ladda ner alla</button>
 </form>
-<form method="POST" action="/clear_logs" class="inline" onsubmit="return confirmClear();">
+<form method="POST" action="/clear_logs" class="inline" onsubmit="return confirm('Är du säker?');">
   <button type="submit">Rensa Meddelanden</button>
 </form>
 </div>
@@ -910,11 +828,6 @@ h2 { color: #003366; border-bottom: 2px solid #0078D7; padding-bottom: 5px; }
 </div>
 
 <script>
-function confirmClear() {
-  return confirm("Är du säker på att du vill ta bort alla meddelanden?");
-}
-
-// Automatisk uppdatering av meddelanden var 10:e sekund
 setInterval(() => {
   fetch("/messages")
     .then(r => r.json())
@@ -923,13 +836,13 @@ setInterval(() => {
       const allDiv = document.getElementById("all-messages");
       
       if (data.filtered.length > 0) {
-        filteredDiv.innerHTML = data.filtered.map(m => `<div class="message">${m}</div>`).join('');
+        filteredDiv.innerHTML = data.filtered.map(m => '<div class="message">' + m + '</div>').join('');
       } else {
         filteredDiv.innerHTML = '<p><em>Inga filtrerade meddelanden ännu...</em></p>';
       }
       
       if (data.all.length > 0) {
-        allDiv.innerHTML = data.all.map(m => `<div class="message">${m}</div>`).join('');
+        allDiv.innerHTML = data.all.map(m => '<div class="message">' + m + '</div>').join('');
       } else {
         allDiv.innerHTML = '<p><em>Inga meddelanden ännu...</em></p>';
       }
@@ -943,136 +856,26 @@ setInterval(() => {
 EMAIL_SETTINGS_TEMPLATE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>E-postinställningar - POCSAG 2025</title>
 <style>
-body { 
-  font-family: 'Segoe UI', Tahoma, sans-serif; 
-  background: #e9eef4; 
-  padding: 20px; 
-  line-height: 1.6;
-}
-.container { 
-  max-width: 600px; 
-  margin: 0 auto; 
-}
-h1 { 
-  color: #003366; 
-  text-align: center;
-  margin-bottom: 30px;
-}
-.form-container { 
-  background: #fff; 
-  padding: 30px; 
-  border-radius: 8px; 
-  box-shadow: 0 0 15px rgba(0,0,0,0.1);
-}
-.form-group {
-  margin-bottom: 20px;
-}
-label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: bold;
-  color: #333;
-}
-input[type="text"], input[type="password"], textarea { 
-  width: 100%; 
-  padding: 12px; 
-  border: 1px solid #ddd; 
-  border-radius: 4px; 
-  font-size: 14px;
-  box-sizing: border-box;
-}
-input[type="text"]:focus, input[type="password"]:focus, textarea:focus {
-  border-color: #0078D7;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 120, 215, 0.2);
-}
-textarea {
-  resize: vertical;
-  min-height: 80px;
-}
-.checkbox-group {
-  display: flex;
-  align-items: center;
-  margin-bottom: 25px;
-}
-.checkbox-group input[type="checkbox"] {
-  margin-right: 10px;
-  transform: scale(1.2);
-}
-.button-group {
-  display: flex;
-  gap: 15px;
-}
-button { 
-  flex: 1;
-  background-color: #0078D7; 
-  color: white; 
-  padding: 12px 20px; 
-  border: none; 
-  border-radius: 4px; 
-  font-weight: bold; 
-  font-size: 14px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-button:hover { 
-  background-color: #005a9e; 
-}
-button[name="action"][value="test"] {
-  background-color: #28a745;
-}
-button[name="action"][value="test"]:hover {
-  background-color: #218838;
-}
-.info-box { 
-  background: #d1ecf1; 
-  border: 1px solid #bee5eb; 
-  padding: 15px; 
-  margin-bottom: 25px; 
-  border-radius: 4px; 
-  border-left: 5px solid #17a2b8;
-}
-.message {
-  padding: 15px;
-  margin-bottom: 20px;
-  border-radius: 4px;
-  font-weight: bold;
-}
-.message.success {
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  color: #155724;
-}
-.message.error {
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  color: #721c24;
-}
-.back-link {
-  display: inline-block;
-  margin-top: 20px;
-  color: #0078D7;
-  text-decoration: none;
-  font-weight: bold;
-}
-.back-link:hover {
-  text-decoration: underline;
-}
-.help-text {
-  font-size: 12px;
-  color: #666;
-  margin-top: 5px;
-}
+body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; }
+h1 { color: #333; text-align: center; }
+.form-container { background: #fff; padding: 30px; border-radius: 8px; }
+.form-group { margin-bottom: 20px; }
+label { display: block; margin-bottom: 8px; font-weight: bold; }
+input, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+textarea { resize: vertical; min-height: 80px; }
+.button-group { display: flex; gap: 15px; }
+button { flex: 1; background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; }
+button[name="action"][value="test"] { background-color: #28a745; }
+.message { padding: 15px; margin-bottom: 20px; border-radius: 4px; font-weight: bold; }
+.message.success { background: #d4edda; color: #155724; }
+.message.error { background: #f8d7da; color: #721c24; }
+.back-link { color: #007bff; text-decoration: none; }
+.help-text { font-size: 12px; color: #666; margin-top: 5px; }
 </style></head><body>
 
 <div class="container">
   <h1>E-postinställningar</h1>
-  
-  <div class="info-box">
-    <strong>📧 Förbättrad dubblettskydd:</strong> E-post med samma Alpha-innehåll blockeras i 10 minuter (tidsstämplar ignoreras).
-    <br><strong>🔒 Säkerhet:</strong> Använd app-specifika lösenord för Gmail/Outlook.
-    <br><strong>👥 Flera mottagare:</strong> Alla mottagare får e-post via BCC så de ser inte varandra.
-  </div>
   
   {% if msg %}
     <div class="message {% if 'OK' in msg or 'sparade' in msg %}success{% else %}error{% endif %}">
@@ -1106,14 +909,21 @@ button[name="action"][value="test"]:hover {
       </div>
       
       <div class="form-group">
+        <label for="subject">Ämnesrad för e-post:</label>
+        <input type="text" id="subject" name="subject" value="{{ cfg.SUBJECT }}" placeholder="Pocsag Larm - Rix">
+        <div class="help-text">Ämnesraden som används för alla e-postnotifieringar</div>
+      </div>
+      
+      <div class="form-group">
         <label for="receivers">Mottagare (e-postadresser):</label>
-        <textarea id="receivers" name="receivers" placeholder="En e-postadress per rad eller separera med komma:&#10;mottagare1@email.com&#10;mottagare2@email.com, mottagare3@email.com">{{ '\n'.join(cfg.RECEIVERS) }}</textarea>
+        <textarea id="receivers" name="receivers" placeholder="En e-postadress per rad eller separera med komma">{{ '\n'.join(cfg.RECEIVERS) }}</textarea>
         <div class="help-text">Lägg till flera mottagare på separata rader eller separera med komma. Alla får e-post via BCC (dold kopia).</div>
       </div>
       
-      <div class="checkbox-group">
-        <input type="checkbox" id="enabled" name="enabled" {% if cfg.ENABLED %}checked{% endif %}>
-        <label for="enabled">Aktivera e-postnotifieringar</label>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="enabled" {% if cfg.ENABLED %}checked{% endif %}> Aktivera e-postnotifieringar
+        </label>
       </div>
       
       <div class="button-group">
@@ -1123,156 +933,28 @@ button[name="action"][value="test"]:hover {
     </form>
   </div>
   
-  <a href="/" class="back-link">← Tillbaka till startsidan</a>
+  <p><a href="/" class="back-link">← Tillbaka till startsidan</a></p>
 </div>
 
 </body></html>
 """
 
 BLACKLIST_SETTINGS_TEMPLATE = """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Blacklist-inställningar - POCSAG 2025</title>
+<html><head><meta charset="utf-8"><title>Blacklist - POCSAG 2025</title>
 <style>
-body { 
-  font-family: 'Segoe UI', Tahoma, sans-serif; 
-  background: #e9eef4; 
-  padding: 20px; 
-  line-height: 1.6;
-}
-.container { 
-  max-width: 700px; 
-  margin: 0 auto; 
-}
-h1 { 
-  color: #003366; 
-  text-align: center;
-  margin-bottom: 30px;
-}
-.form-container { 
-  background: #fff; 
-  padding: 30px; 
-  border-radius: 8px; 
-  box-shadow: 0 0 15px rgba(0,0,0,0.1);
-}
-.form-group {
-  margin-bottom: 20px;
-}
-.form-row {
-  display: flex;
-  gap: 20px;
-}
-.form-row .form-group {
-  flex: 1;
-}
-label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: bold;
-  color: #333;
-}
-textarea { 
-  width: 100%; 
-  padding: 12px; 
-  border: 1px solid #ddd; 
-  border-radius: 4px; 
-  font-size: 14px;
-  box-sizing: border-box;
-  resize: vertical;
-  min-height: 150px;
-  font-family: 'Courier New', monospace;
-}
-textarea:focus {
-  border-color: #dc3545;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(220, 53, 69, 0.2);
-}
-.checkbox-group {
-  display: flex;
-  align-items: center;
-  margin-bottom: 25px;
-  background: #f8f9fa;
-  padding: 15px;
-  border-radius: 4px;
-  border-left: 4px solid #dc3545;
-}
-.checkbox-group input[type="checkbox"] {
-  margin-right: 10px;
-  transform: scale(1.2);
-}
-button { 
-  background-color: #dc3545; 
-  color: white; 
-  padding: 12px 20px; 
-  border: none; 
-  border-radius: 4px; 
-  font-weight: bold; 
-  font-size: 14px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  width: 100%;
-}
-button:hover { 
-  background-color: #c82333; 
-}
-.info-box { 
-  background: #fff3cd; 
-  border: 1px solid #ffeaa7; 
-  padding: 15px; 
-  margin-bottom: 25px; 
-  border-radius: 4px; 
-  border-left: 5px solid #ffc107;
-}
-.warning-box {
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  padding: 15px;
-  margin-bottom: 25px;
-  border-radius: 4px;
-  border-left: 5px solid #dc3545;
-  color: #721c24;
-}
-.message {
-  padding: 15px;
-  margin-bottom: 20px;
-  border-radius: 4px;
-  font-weight: bold;
-}
-.message.success {
-  background: #d4edda;
-  border: 1px solid #c3e6cb;
-  color: #155724;
-}
-.message.error {
-  background: #f8d7da;
-  border: 1px solid #f5c6cb;
-  color: #721c24;
-}
-.back-link {
-  display: inline-block;
-  margin-top: 20px;
-  color: #0078D7;
-  text-decoration: none;
-  font-weight: bold;
-}
-.back-link:hover {
-  text-decoration: underline;
-}
-.help-text {
-  font-size: 12px;
-  color: #666;
-  margin-top: 5px;
-}
-.section-title {
-  color: #dc3545;
-  font-size: 18px;
-  font-weight: bold;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-}
-.section-title::before {
-  content: "🚫";
-  margin-right: 8px;
-}
+body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+.container { max-width: 700px; margin: 0 auto; }
+h1 { color: #333; text-align: center; }
+.form-container { background: #fff; padding: 30px; border-radius: 8px; }
+.form-row { display: flex; gap: 20px; }
+.form-group { margin-bottom: 20px; flex: 1; }
+label { display: block; margin-bottom: 8px; font-weight: bold; }
+textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; resize: vertical; min-height: 150px; font-family: monospace; }
+button { background-color: #dc3545; color: white; padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; width: 100%; }
+.message { padding: 15px; margin-bottom: 20px; border-radius: 4px; font-weight: bold; background: #d4edda; color: #155724; }
+.back-link { color: #007bff; text-decoration: none; }
+.help-text { font-size: 12px; color: #666; margin-top: 5px; }
+.warning-box { background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; margin-bottom: 25px; border-radius: 4px; color: #721c24; }
 </style></head><body>
 
 <div class="container">
@@ -1282,52 +964,38 @@ button:hover {
     <strong>⚠️ Varning:</strong> Meddelanden som matchar blacklist-reglerna kommer att blockeras permanent och visas inte i gränssnittet eller loggar.
   </div>
   
-  <div class="info-box">
-    <strong>📝 Hur det fungerar:</strong>
-    <ul style="margin: 10px 0 0 20px;">
-      <li><strong>RIC-adresser:</strong> Blockerar alla meddelanden från specifika adresser</li>
-      <li><strong>Ordfilter:</strong> Blockerar meddelanden som innehåller specifika ord eller fraser</li>
-      <li><strong>Skiftlägeskänslighet:</strong> Avgör om ordfilter ska vara känsliga för stora/små bokstäver</li>
-    </ul>
-  </div>
-  
   {% if msg %}
-    <div class="message success">
-      {{ msg }}
-    </div>
+    <div class="message">{{ msg }}</div>
   {% endif %}
   
   <div class="form-container">
     <form method="POST">
       <div class="form-row">
         <div class="form-group">
-          <div class="section-title">RIC-adresser</div>
           <label for="addresses">Blockerade RIC-adresser:</label>
-          <textarea id="addresses" name="addresses" placeholder="En RIC-adress per rad, endast siffror:&#10;123456&#10;789012&#10;555123">{{ addresses }}</textarea>
+          <textarea id="addresses" name="addresses" placeholder="En RIC-adress per rad, endast siffror:&#10;123456&#10;789012">{{ addresses }}</textarea>
           <div class="help-text">Ange en RIC-adress per rad. Endast numeriska värden accepteras.</div>
         </div>
         
         <div class="form-group">
-          <div class="section-title">Ordfilter</div>
           <label for="words">Blockerade ord/fraser:</label>
-          <textarea id="words" name="words" placeholder="Ett ord eller fras per rad:&#10;SPAM&#10;Test meddelande&#10;Reklam">{{ words }}</textarea>
+          <textarea id="words" name="words" placeholder="Ett ord eller fras per rad:&#10;SPAM&#10;Test meddelande">{{ words }}</textarea>
           <div class="help-text">Ange ett ord eller en fras per rad. Meddelanden som innehåller dessa kommer att blockeras.</div>
         </div>
       </div>
       
-      <div class="checkbox-group">
-        <input type="checkbox" id="case_sensitive" name="case_sensitive" {% if case_sensitive %}checked{% endif %}>
-        <label for="case_sensitive">
-          <strong>Skiftlägeskänslig ordfiltrering</strong><br>
-          <small>Om aktiverad: "TEST" och "test" behandlas som olika ord. Om inaktiverad: båda blockeras.</small>
+      <div class="form-group">
+        <label>
+          <input type="checkbox" name="case_sensitive" {% if case_sensitive %}checked{% endif %}> Skiftlägeskänslig ordfiltrering
         </label>
+        <div class="help-text">Om aktiverad: "TEST" och "test" behandlas som olika ord. Om inaktiverad: båda blockeras.</div>
       </div>
       
       <button type="submit">🚫 Uppdatera Blacklist</button>
     </form>
   </div>
   
-  <a href="/" class="back-link">← Tillbaka till startsidan</a>
+  <p><a href="/" class="back-link">← Tillbaka till startsidan</a></p>
 </div>
 
 </body></html>
@@ -1335,11 +1003,15 @@ button:hover {
 
 
 if __name__ == "__main__":
+    """Huvudingång för POCSAG 2025-systemet"""
     try:
+        Logger.log("=== POCSAG 2025-system startar ===")
         app = POCSAGApp()
         app.run()
     except KeyboardInterrupt:
-        Logger.log("Applikation avslutad av användare")
+        Logger.log("Applikation avslutad av användare (Ctrl+C)")
     except Exception as e:
-        Logger.log(f"Kritiskt fel: {e}")
+        Logger.log(f"Kritiskt fel i huvudprogrammet: {e}")
         raise
+    finally:
+        Logger.log("=== POCSAG 2025-system avslutat ===")
