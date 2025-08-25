@@ -133,37 +133,6 @@ Blacklist: Blockera adresser/ord via webben eller config.json
 
 E-post: Konfigurera SMTP, mottagare och ämnesrad
 
-🛠️ Felsökning
-RTL-SDR
-bash
-Kopiera
-Redigera
-rtl_test
-sudo usermod -a -G plugdev $USER
-sudo reboot
-Multimon-ng
-bash
-Kopiera
-Redigera
-rtl_fm -f 161.4375M -M fm -s 22050 -g 49 | multimon-ng -t raw -a POCSAG512 -a POCSAG1200 -f alpha -
-Glömt lösenord
-Stoppa systemet
-
-Ta bort config.json
-
-Starta om och gå till /setup
-
-👨‍💻 Utveckling
-Flask-baserat webbgränssnitt
-
-Modulär design med fem huvudkomponenter
-
-Threading för parallell hantering
-
-Loggning för felsökning
-
-Dataklasser för konfigurationshantering
-
 📬 Kontakt
 Utvecklare: SA7BNB Anders Isaksson
 
