@@ -136,6 +136,6 @@ E-post: Konfigurera SMTP, mottagare och ämnesrad
 📬 Kontakt
 Utvecklare: SA7BNB Anders Isaksson
 
-E-post: hamradio(@)sa7bnb.se
+E-post: sa7bnb(@)gmail.com
 
 GitHub: https://github.com/sa7bnb/pocsag2025
