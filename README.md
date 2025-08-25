@@ -1,8 +1,8 @@
 POCSAG 2025 - Dokumentation
 POCSAG 2025 är ett Python-baserat system för att avkoda och hantera POCSAG-meddelanden med hjälp av RTL-SDR. Systemet erbjuder en webbaserad användargränssnitt för övervakning, filtrering och e-postnotifieringar av mottagna meddelanden.
 Utvecklad av: SA7BNB - Anders Isaksson
-🆕 Ny modulär arkitektur
 
+🆕 Ny modulär arkitektur
 Systemet har omstrukturerats för bättre underhållbarhet och utveckling:
 •	config_manager.py - Konfigurationshantering och dataklasser
 •	utils.py - Hjälpfunktioner och verktyg
@@ -46,19 +46,23 @@ Huvudfunktioner
 •	🆕 Konfigurerbar ämnesrad för e-postnotifieringar
 •	🆕 Automatisk testfunktion för att verifiera konfiguration
 🔐 Säkerhet och autentisering
+
 •	🆕 Komplett autentiseringssystem med inloggning
 •	Säkra sessioner med konfigurerbar timeout
 •	Skydd mot brute force med IP-baserad låsning
 •	Första-gången setup för säker konfiguration
 •	Lösenordshantering med säker hashning
 •	Sessionhantering med automatisk utloggning
+
 🌐 Webbgränssnitt
 •	🆕 Responsiv och modern design
 •	Säker inloggning med användarkonto
 •	Realtidsuppdatering av meddelanden (var 10:e sekund)
+
 •	🆕 Dedikerade inställningssidor för olika funktioner
 •	Nedladdning av meddelandeloggar
 •	Komplett konfiguration av alla inställningar via webben
+
 •	🆕 Användarhantering med sessionkontroll
 Systemkrav
 Hårdvara
@@ -70,6 +74,7 @@ Programvara
 •	RTL-SDR-drivrutiner
 •	multimon-ng
 •	Flask och andra Python-beroenden
+
 Installation
 Automatisk installation (Rekommenderat)
 1.	Installera Raspberry Pi OS Lite (32-bitars) med Raspberry Pi Imager
@@ -80,16 +85,20 @@ sudo apt update && sudo apt install git -y && git clone https://github.com/sa7bn
 5.	Efter omstart, kör:
 cd pocsag2025
 chmod +x *.py
-6.	🆕 Konfigurera autostart:
+
+7.	🆕 Konfigurera autostart:
 sudo crontab -e
 Lägg till längst upp:
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
-7.	Starta om: sudo reboot
-8.	🆕 Första inloggning:
+
+9.	Starta om: sudo reboot
+    
+10.	🆕 Första inloggning:
 o	Vänta 30 sekunder efter omstart
 o	Surfa till http://pi-ipadress:5000/
 o	Klicka på "Sätt upp ditt konto här"
 o	Skapa ditt administratörskonto
+
 🆕 Säkerhetskonfiguration
 Första gången-setup
 1.	Gå till http://pi-ipadress:5000/setup
@@ -116,6 +125,7 @@ Filteradresser (RIC)
 •	Endast numeriska adresser accepteras
 •	Exempel: 
 •	123456789012555000
+
 🆕 Blacklist-konfiguration
 Blacklist-funktionen har två sätt att blockera meddelanden:
 Via Webbgränssnittet (Rekommenderat)
@@ -144,6 +154,7 @@ Exempel:
 •	RIC-adresser: 1600000, 1234567 - Blockerar alla meddelanden från dessa adresser
 •	Ord: Driftlarm, Testlarm, Övning - Blockerar meddelanden som innehåller dessa ord
 •	Case-sensitive: false betyder att både "TESTLARM" och "testlarm" blockeras
+
 🆕 E-postinställningar
 Gå till "E-postinställningar" för att konfigurera:
 Gmail-konfiguration:
@@ -155,15 +166,18 @@ Outlook-konfiguration:
 •	SMTP-server: smtp-mail.outlook.com
 •	Port: 587
 •	Säkerhet: Använd app-lösenord för Outlook
+
 🆕 Konfigurerbar ämnesrad
 •	Anpassad ämnesrad: Sätt egen ämnesrad för e-postnotifieringar
 •	Standard: "Pocsag Larm - Rix"
 •	Exempel: "🚨 Brandlarm", "📻 POCSAG Alert", etc.
+
 🆕 Flera mottagare
 •	Lägg till flera e-postadresser separerade med komma eller på separata rader
 •	Alla mottagare får e-post via BCC (dold kopia) för integritet
 •	Exempel: 
 •	mottagare1@email.commottagare2@email.com, mottagare3@email.com
+
 🆕 Testfunktion
 •	Klicka "📧 Skicka testmail" för att verifiera konfigurationen
 •	Testmailet skickas till alla konfigurerade mottagare
@@ -182,11 +196,13 @@ Grundläggande användning
 •	Alla meddelanden: Visar samtliga mottagna meddelanden (ej blockerade)
 •	Automatisk uppdatering: Sidan uppdateras var 10:e sekund
 •	Realtidsloggar: Alla meddelanden sparas även i filer
-4. 🆕 Hantera säkerhet
+
+5. 🆕 Hantera säkerhet
 •	Gå till "🔐 Säkerhet" för att: 
 o	Ändra lösenord
 o	Konfigurera sessionstimeout
 o	Justera säkerhetsinställningar
+
 🆕 Avancerade funktioner
 Kartlänkar
 Meddelanden med RT90-koordinater får automatiskt kartlänkar:
@@ -215,6 +231,7 @@ sudo reboot
 Multimon-ng-problem
 # Testa manuellt
 rtl_fm -f 161.4375M -M fm -s 22050 -g 49 | multimon-ng -t raw -a POCSAG512 -a POCSAG1200 -f alpha -
+
 🆕 Autentiseringsproblem
 •	Glömt lösenord: Stoppa systemet, ta bort config.json, starta om och gå till /setup
 •	Låst konto: Vänta den konfigurerade tiden eller starta om systemet
@@ -224,6 +241,7 @@ E-postproblem
 •	Använd app-specifika lösenord, inte vanligt lösenord
 •	Verifiera SMTP-inställningar med testfunktionen
 •	Kolla brandväggsinställningar
+
 🆕 Blacklist-problem
 •	Använd webbgränssnittet för att undvika syntaxfel
 •	Kontrollera att RIC-adresser är numeriska
@@ -239,17 +257,20 @@ Minneskonsumption
 •	Håller max 50 meddelanden i minnet per kategori
 •	Automatisk rensning av e-post-cache var 10:e minut
 •	Loggar växer kontinuerligt (rensa manuellt vid behov)
+
 •	🆕 Effektiv blacklist-cache med minimal påverkan på prestanda
 Nätverkstrafik
 •	Minimal bandbredd för webbgränssnitt
 •	E-post endast vid filtrerade Alpha-meddelanden
 •	Dubblettskydd begränsar e-post-spam
+
 •	🆕 Säkra sessioner med krypterad kommunikation
 🆕 Systemresurser
 •	CPU: Låg belastning under normal drift
 •	Minne: ~50-100MB beroende på meddelandevolym
 •	Disk: Loggar växer över tid, övervaka diskutrymme
 •	Nätverk: Minimal trafik, endast vid e-post och webbåtkomst
+
 Säkerhet
 🆕 Autentisering och auktorisering
 •	Säkra lösenord: BCrypt-hashning av lösenord
@@ -257,42 +278,51 @@ Säkerhet
 •	Brute force-skydd: IP-baserad låsning efter misslyckade försök
 •	Automatisk utloggning: Sessioner går ut automatiskt
 Lösenordshantering
+
 •	🆕 Säker lagring: Lösenord hashas med Werkzeug Security
 •	App-lösenord för e-post lagras i config.json
 •	Använd aldrig huvudlösenord för e-postkonton
+
 •	🆕 Lösenordspolicy: Minimum 6 tecken, rekommenderar starkt lösenord
 Nätverkssäkerhet
 •	Standardport 5000 lyssnar på alla gränssnitt (0.0.0.0)
+
 •	🆕 Sessionkryptering: Alla sessioner är krypterade
 •	Överväg brandväggsinställningar för produktionsmiljö
+
 •	🆕 Säker autentisering: Obligatorisk inloggning för alla funktioner
 🆕 Dataintegritet
 •	Konfigurationsvalidering: Automatisk kontroll vid start
 •	Automatisk migrering: Från äldre konfigurationsformat
 •	Säker e-posthantering: BCC för att skydda mottagares integritet
 •	Backup-rutiner: Rekommenderas för viktiga konfigurationer
+
 🆕 Nyheter i version 2025
 🔐 Komplett säkerhetssystem
 •	Autentisering: Obligatorisk inloggning för alla användare
 •	Sessionhantering: Säkra sessioner med konfigurerbar timeout
 •	Brute force-skydd: Automatisk låsning vid misslyckade försök
 •	Första gången-setup: Säker konfiguration av administratörskonto
+
 🆕 Förbättrad arkitektur
 •	Modulär design: Uppdelad i fem logiska komponenter
 •	Bättre underhållbarhet: Enklare att utveckla och debugga
 •	Förbättrade kommentarer: Detaljerad dokumentation i koden
 •	Robustare felhantering: Bättre återhämtning från fel
+
 🆕 Avancerad Blacklist
 •	Dubbel filtrering: Både RIC-adresser och ordinnehåll
 •	Intelligent sökning: Case-sensitive/insensitive alternativ
 •	Webbaserad hantering: Ingen manuell JSON-redigering
 •	Realtidsuppdatering: Ändringar träder i kraft omedelbart
+
 🆕 Förbättrade E-postfunktioner
 •	Flera mottagare: Stöd för obegränsat antal e-postadresser
 •	BCC-skydd: Mottagare ser inte varandras adresser
 •	Konfigurerbar ämnesrad: Anpassa ämnesraden för dina behov
 •	Förbättrad validering: Automatisk kontroll av e-postformat
 •	Testfunktion: Enkelt att verifiera konfiguration
+
 🆕 Moderniserat användargränssnitt
 •	Responsiv design: Fungerar på alla enheter
 •	Dedikerade sidor: Separata sidor för olika funktioner
@@ -303,6 +333,7 @@ Kodstruktur
 •	Modulär design: Fem separata Python-filer med specifika ansvarsområden
 •	Flask-baserat: Modernt webbramverk för användargränssnitt
 •	Threading: Parallell bearbetning för optimal prestanda
+
 •	🆕 Dataklasser: Strukturerad konfigurationshantering
 •	🆕 Avancerad filtrering: Effektiv blacklist-implementation
 •	Omfattande loggning: Detaljerad loggning för felsökning
