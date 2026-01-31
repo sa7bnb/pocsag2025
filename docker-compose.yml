@@ -1,0 +1,7 @@
+services:
+  pocsag2025:
+    build: .
+    container_name: pocsag2025
+    ports:
+      - "5000:5000"
+    restart: always
