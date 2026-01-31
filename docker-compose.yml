@@ -5,3 +5,6 @@ services:
     ports:
       - "5000:5000"
     restart: always
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    privileged: true
