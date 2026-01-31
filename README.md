@@ -101,6 +101,13 @@ Det enklaste sättet att komma igång är med Docker.
 **Installation:**
 
 ```bash
+sudo apt update && sudo apt upgrade -y
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+sudo reboot
+```
+
+```bash
 git clone https://github.com/sa7bnb/pocsag2025.git
 cd pocsag2025
 docker compose up -d
