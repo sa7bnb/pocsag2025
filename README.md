@@ -3,20 +3,23 @@
 POCSAG 2025 är ett **Python-baserat system** för att avkoda och hantera **POCSAG-meddelanden** med hjälp av RTL-SDR.  
 Systemet erbjuder ett **webbaserat användargränssnitt** för övervakning, filtrering och e-postnotifieringar av mottagna meddelanden.
 
-**Utvecklad av:** [SA7BNB - Anders Isaksson](https://github.com/sa7bnb)  
+**Utvecklad av:** [SA7BNB - Anders Isaksson](https://github.com/sa7bnb)
 
 ---
 
 ## ✨ Nyheter
+
 - 🆕 **Modulär arkitektur**
 - 🆕 **Blacklist-funktion** med realtidsuppdatering
 - 🆕 **Förbättrad e-posthantering** med stöd för flera mottagare och testfunktion
 - 🆕 **Säkerhetssystem** med autentisering, sessioner och brute force-skydd
 - 🆕 **Moderniserat webbgränssnitt**
+- 🆕 **Docker-stöd** för enkel installation
 
 ---
 
 ## 📂 Arkitektur
+
 Projektet är uppdelat i flera Python-moduler för bättre underhållbarhet:
 
 - `config_manager.py` – Konfigurationshantering och dataklasser  
@@ -87,55 +90,98 @@ Projektet är uppdelat i flera Python-moduler för bättre underhållbarhet:
 
 ## ⚙️ Installation
 
-### Automatisk installation (Rekommenderat)
+### 🐳 Docker-installation (Rekommenderat)
+
+Det enklaste sättet att komma igång är med Docker.
+
+**Förutsättningar:**
+- Docker och Docker Compose installerat
+- RTL-SDR-dongel ansluten
+
+**Installation:**
+
+```bash
+git clone https://github.com/sa7bnb/pocsag2025.git
+cd pocsag2025
+docker compose up -d
+```
+
+Webgränssnittet finns nu på: `http://<din-ip>:5000`
+
+**Användbara Docker-kommandon:**
+
+```bash
+# Visa loggar
+docker logs pocsag2025
+
+# Stoppa
+docker compose down
+
+# Starta om
+docker compose restart
+
+# Uppdatera till senaste versionen
+git pull
+docker compose up -d --build
+```
+
+---
+
+### 🖥️ Manuell installation (Raspberry Pi)
+
 ```bash
 sudo apt update && sudo apt install git -y
 git clone https://github.com/sa7bnb/pocsag2025.git
 sudo apt install rtl-sdr multimon-ng python3-pip python3-flask python3-pyproj python3-werkzeug -y
 sudo raspi-config --expand-rootfs && sudo reboot
+```
+
 Efter omstart:
 
-bash
-Kopiera
-Redigera
+```bash
 cd pocsag2025
 chmod +x *.py
-Autostart
-bash
-Kopiera
-Redigera
+```
+
+**Autostart med crontab:**
+
+```bash
 sudo crontab -e
+```
+
 Lägg till:
 
-bash
-Kopiera
-Redigera
+```bash
 @reboot sleep 30 && /usr/bin/python3 /home/sa7bnb/pocsag2025/server.py
+```
+
 Starta om:
 
-bash
-Kopiera
-Redigera
+```bash
 sudo reboot
-🔑 Första inloggning
-Surfa till http://pi-ipadress:5000/
+```
 
-Klicka på "Sätt upp ditt konto här"
+---
 
-Skapa ditt administratörskonto
+## 🔑 Första inloggning
 
-⚡ Konfiguration
-Frekvens: Ställ in i MHz (ex. 161.4375)
+1. Surfa till `http://<pi-ipadress>:5000/`
+2. Klicka på "Sätt upp ditt konto här"
+3. Skapa ditt administratörskonto
 
-RIC-filter: Lägg till numeriska adresser
+---
 
-Blacklist: Blockera adresser/ord via webben eller config.json
+## ⚡ Konfiguration
 
-E-post: Konfigurera SMTP, mottagare och ämnesrad
+- **Frekvens:** Ställ in i MHz (ex. 161.4375)
+- **RIC-filter:** Lägg till numeriska adresser
+- **Blacklist:** Blockera adresser/ord via webben eller config.json
+- **E-post:** Konfigurera SMTP, mottagare och ämnesrad
 
-📬 Kontakt
-Utvecklare: SA7BNB Anders Isaksson
+---
 
-E-post: sa7bnb(@)gmail.com
+## 📬 Kontakt
 
-GitHub: https://github.com/sa7bnb/pocsag2025
+- **Utvecklare:** SA7BNB Anders Isaksson
+- **E-post:** sa7bnb(@)gmail.com
+- **GitHub:** https://github.com/sa7bnb/pocsag2025
