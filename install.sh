@@ -3,10 +3,35 @@
 # POCSAG 2025 - Installationsskript for Raspberry Pi
 # ============================================================
 
-# 1. Lagg till Raspberry Pi-repo om det saknas
-if ! grep -q "raspberrypi.com" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
-    echo "deb http://archive.raspberrypi.com/debian/ bookworm main" | sudo tee /etc/apt/sources.list.d/raspi.list
-    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 82B129927FA3303E 2>/dev/null || true
+# 1. Kontrollera och fixa apt-kallor om paket saknas
+DISTRO=$(lsb_release -cs 2>/dev/null || echo "trixie")
+
+if ! apt-cache show git &>/dev/null; then
+    echo "Fixar apt-kallor for $DISTRO..."
+    sudo tee /etc/apt/sources.list.d/debian.sources > /dev/null << EOF
+Types: deb
+URIs: http://deb.debian.org/debian/
+Suites: $DISTRO $DISTRO-updates
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+
+Types: deb
+URIs: http://deb.debian.org/debian-security/
+Suites: $DISTRO-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+EOF
+fi
+
+if ! grep -q "raspberrypi.com" /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null; then
+    echo "Lagg till Raspberry Pi-repo..."
+    sudo tee /etc/apt/sources.list.d/raspi.sources > /dev/null << EOF
+Types: deb
+URIs: http://archive.raspberrypi.com/debian/
+Suites: $DISTRO
+Components: main
+Signed-By: /usr/share/keyrings/raspberrypi-archive-keyring.gpg
+EOF
 fi
 
 # 2. Uppdatera system och installera beroenden
