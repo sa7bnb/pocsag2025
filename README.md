@@ -71,7 +71,7 @@ All konfiguration sköts via webbgränssnittet:
 | Inställning | Beskrivning |
 |---|---|
 | **Frekvens** | Ange önskad frekvens i MHz, t.ex. `161.4375` |
-| *Sätt Gain* | Ange önskad gain |
+| **Sätt Gain** | Ange önskad gain på din SDR sticka |
 | **RIC-filter** | Lägg till numeriska adresser att bevaka |
 | **Blacklist** | Blockera adresser eller ord – via webben eller direkt i `config.json` |
 | **E-post** | SMTP-inställningar, mottagarlistor och anpassade ämnesrader |
