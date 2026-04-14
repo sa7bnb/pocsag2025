@@ -3,9 +3,15 @@
 # POCSAG 2025 - Installationsskript for Raspberry Pi
 # ============================================================
 
-# 1. Kontrollera och fixa apt-kallor om paket saknas
+CURRENT_USER=$(whoami)
+CURRENT_HOME=$(eval echo ~$CURRENT_USER)
+INSTALL_DIR="$CURRENT_HOME/pocsag2025"
 DISTRO=$(lsb_release -cs 2>/dev/null || echo "trixie")
 
+echo "Installerar som anvandare: $CURRENT_USER"
+echo "Installationsmapp: $INSTALL_DIR"
+
+# 1. Kontrollera och fixa apt-kallor om paket saknas
 if ! apt-cache show git &>/dev/null; then
     echo "Fixar apt-kallor for $DISTRO..."
     sudo tee /etc/apt/sources.list.d/debian.sources > /dev/null << EOF
@@ -39,38 +45,38 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y git rtl-sdr multimon-ng python3-pip
 
 # 3. Klona repo
-git clone https://github.com/sa7bnb/pocsag2025.git
-cd /home/sa7bnb/pocsag2025
+git clone https://github.com/sa7bnb/pocsag2025.git "$INSTALL_DIR"
+cd "$INSTALL_DIR"
 
 # 4. Installera Python-beroenden
 python3 -m pip install flask pyproj werkzeug gunicorn --break-system-packages
 
 # 5. Lagg till ~/.local/bin i PATH
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$CURRENT_HOME/.bashrc" && source "$CURRENT_HOME/.bashrc"
 
 # 6. Blockera RTL-SDR kernel-drivrutin
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
 sudo modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 
 # 7. Skapa systemd-tjanst
-sudo tee /etc/systemd/system/pocsag.service > /dev/null <<SERVICE
+sudo tee /etc/systemd/system/pocsag.service > /dev/null << EOF
 [Unit]
 Description=POCSAG 2025 - By SA7BNB
 After=network.target
 
 [Service]
-User=sa7bnb
-WorkingDirectory=/home/sa7bnb/pocsag2025
-Environment="PATH=/home/sa7bnb/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/sa7bnb/.local/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 --timeout 120 pocsag2025:app
+User=$CURRENT_USER
+WorkingDirectory=$INSTALL_DIR
+Environment="PATH=$CURRENT_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$CURRENT_HOME/.local/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 --timeout 120 pocsag2025:app
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/sa7bnb/pocsag2025/gunicorn.log
-StandardError=append:/home/sa7bnb/pocsag2025/gunicorn.log
+StandardOutput=append:$INSTALL_DIR/gunicorn.log
+StandardError=append:$INSTALL_DIR/gunicorn.log
 
 [Install]
 WantedBy=multi-user.target
-SERVICE
+EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable pocsag
