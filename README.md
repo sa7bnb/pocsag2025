@@ -12,6 +12,7 @@
 - 🆕 Förbättrad e-posthantering med stöd för flera mottagare och testfunktion
 - 🆕 Säkerhetssystem med autentisering, sessioner och brute force-skydd
 - 🆕 Moderniserat webbgränssnitt med responsiv design
+- 🆕 Möjlighet att justera gain
 
 ---
 
