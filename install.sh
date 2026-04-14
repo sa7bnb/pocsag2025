@@ -4,61 +4,27 @@
 # ============================================================
 
 CURRENT_USER=$(whoami)
-CURRENT_HOME=$(eval echo ~$CURRENT_USER)
-INSTALL_DIR="$CURRENT_HOME/pocsag2025"
-DISTRO=$(lsb_release -cs 2>/dev/null || echo "trixie")
+INSTALL_DIR="/home/$CURRENT_USER/pocsag2025"
 
-echo "Installerar som anvandare: $CURRENT_USER"
-echo "Installationsmapp: $INSTALL_DIR"
-
-# 1. Kontrollera och fixa apt-kallor om paket saknas
-if ! apt-cache show git &>/dev/null; then
-    echo "Fixar apt-kallor for $DISTRO..."
-    sudo tee /etc/apt/sources.list.d/debian.sources > /dev/null << EOF
-Types: deb
-URIs: http://deb.debian.org/debian/
-Suites: $DISTRO $DISTRO-updates
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-Types: deb
-URIs: http://deb.debian.org/debian-security/
-Suites: $DISTRO-security
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-EOF
-fi
-
-if ! grep -q "raspberrypi.com" /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null; then
-    echo "Lagg till Raspberry Pi-repo..."
-    sudo tee /etc/apt/sources.list.d/raspi.sources > /dev/null << EOF
-Types: deb
-URIs: http://archive.raspberrypi.com/debian/
-Suites: $DISTRO
-Components: main
-Signed-By: /usr/share/keyrings/raspberrypi-archive-keyring.gpg
-EOF
-fi
-
-# 2. Uppdatera system och installera beroenden
-sudo apt update && sudo apt upgrade -y
+# 1. Installera beroenden
+sudo apt update
 sudo apt install -y git rtl-sdr multimon-ng python3-pip
 
-# 3. Klona repo
+# 2. Klona repo
 git clone https://github.com/sa7bnb/pocsag2025.git "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# 4. Installera Python-beroenden
+# 3. Installera Python-beroenden
 python3 -m pip install flask pyproj werkzeug gunicorn --break-system-packages
 
-# 5. Lagg till ~/.local/bin i PATH
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$CURRENT_HOME/.bashrc" && source "$CURRENT_HOME/.bashrc"
+# 4. Lagg till ~/.local/bin i PATH
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "/home/$CURRENT_USER/.bashrc"
 
-# 6. Blockera RTL-SDR kernel-drivrutin
+# 5. Blockera RTL-SDR kernel-drivrutin
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
 sudo modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 
-# 7. Skapa systemd-tjanst
+# 6. Skapa systemd-tjanst
 sudo tee /etc/systemd/system/pocsag.service > /dev/null << EOF
 [Unit]
 Description=POCSAG 2025 - By SA7BNB
@@ -67,8 +33,8 @@ After=network.target
 [Service]
 User=$CURRENT_USER
 WorkingDirectory=$INSTALL_DIR
-Environment="PATH=$CURRENT_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=$CURRENT_HOME/.local/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 --timeout 120 pocsag2025:app
+Environment="PATH=/home/$CURRENT_USER/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/$CURRENT_USER/.local/bin/gunicorn --bind 0.0.0.0:5000 --workers 1 --threads 4 --timeout 120 pocsag2025:app
 Restart=always
 RestartSec=10
 StandardOutput=append:$INSTALL_DIR/gunicorn.log
@@ -82,8 +48,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable pocsag
 sudo systemctl start pocsag
 
-# 8. Kontrollera status
-sudo systemctl status pocsag
+# 7. Starta om
 echo "Installation klar! Startar om om 10 sekunder..."
 sleep 10
 sudo reboot
