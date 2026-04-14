@@ -3,25 +3,31 @@
 # POCSAG 2025 - Installationsskript for Raspberry Pi
 # ============================================================
 
-# 1. Uppdatera system
-sudo apt update && sudo apt upgrade -y
-sudo apt install git rtl-sdr multimon-ng python3-pip -y
+# 1. Lagg till Raspberry Pi-repo om det saknas
+if ! grep -q "raspberrypi.com" /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
+    echo "deb http://archive.raspberrypi.com/debian/ bookworm main" | sudo tee /etc/apt/sources.list.d/raspi.list
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 82B129927FA3303E 2>/dev/null || true
+fi
 
-# 2. Klona repo
+# 2. Uppdatera system och installera beroenden
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git rtl-sdr multimon-ng python3-pip
+
+# 3. Klona repo
 git clone https://github.com/sa7bnb/pocsag2025.git
 cd /home/sa7bnb/pocsag2025
 
-# 3. Installera Python-beroenden
+# 4. Installera Python-beroenden
 python3 -m pip install flask pyproj werkzeug gunicorn --break-system-packages
 
-# 4. Lagg till ~/.local/bin i PATH
+# 5. Lagg till ~/.local/bin i PATH
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
-# 5. Blockera RTL-SDR kernel-drivrutin
+# 6. Blockera RTL-SDR kernel-drivrutin
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
 sudo modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 
-# 6. Skapa systemd-tjanst
+# 7. Skapa systemd-tjanst
 sudo tee /etc/systemd/system/pocsag.service > /dev/null <<SERVICE
 [Unit]
 Description=POCSAG 2025 - By SA7BNB
@@ -45,5 +51,5 @@ sudo systemctl daemon-reload
 sudo systemctl enable pocsag
 sudo systemctl start pocsag
 
-# 7. Kontrollera status
+# 8. Kontrollera status
 sudo systemctl status pocsag
