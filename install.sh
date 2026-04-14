@@ -84,3 +84,6 @@ sudo systemctl start pocsag
 
 # 8. Kontrollera status
 sudo systemctl status pocsag
+echo "Installation klar! Startar om om 10 sekunder..."
+sleep 10
+sudo reboot
