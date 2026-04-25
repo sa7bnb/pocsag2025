@@ -20,7 +20,6 @@
 | 🔐 | **Säkerhetshärdning** – persistenta sessioner, HttpOnly + SameSite-cookies, starkare lösenordshashning |
 | 🔄 | **Automatisk logg-rotation** vid 10 MB – inget mer fullt SD-kort |
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
-| 📄 | **PDF-manualer** – fullständig användarmanual (22 sidor) + snabbstartguide (11 sidor) |
 
 ---
 
