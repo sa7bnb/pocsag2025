@@ -155,15 +155,6 @@ All konfiguration sköts via webbgränssnittet:
 
 ---
 
-## 📚 Dokumentation
-
-PDF-manualer finns tillgängliga i repot:
-
-- 📖 **Användarmanual** (22 sidor) – komplett genomgång för egen installation, alla funktioner och felsökning
-- 🚀 **Snabbstartguide** (11 sidor) – för dig som använder den färdiga IMG-filen och vill komma igång snabbt
-
----
-
 ## 🔄 Uppdateringar
 
 Nya versioner av POCSAG 2025 och uppdaterade IMG-filer publiceras här på GitHub. Ta alltid en **backup av din konfiguration** innan du uppdaterar — så kan du återställa alla inställningar direkt efteråt.
