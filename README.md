@@ -3,10 +3,11 @@
 > Ett komplett system för att avkoda och hantera POCSAG-meddelanden via RTL-SDR, med webbaserat gränssnitt för övervakning, filtrering, e-postnotifieringar och konfigurationshantering.
 
 **Utvecklad av:** [SA7BNB – Anders Isaksson](https://github.com/sa7bnb)
+**Aktuell version:** `v20260425`
 
 ---
 
-## ✨ Nyheter - 20260419
+## ✨ Nyheter – 20260425
 
 | # | Nyhet |
 |---|---|
@@ -16,7 +17,7 @@
 | 💾 | **Backup och återställning** – spara hela konfigurationen som JSON-fil med ett klick |
 | 🚫 | **Blacklist** med realtidsuppdatering för RIC-adresser och ord |
 | 📧 | **Förbättrad e-posthantering** med stöd för flera mottagare och testfunktion |
-| 🔐 | **Säkerhetshärdning** – persistenta sessioner, CSRF-skydd, starkare lösenordshashning |
+| 🔐 | **Säkerhetshärdning** – persistenta sessioner, HttpOnly + SameSite-cookies, starkare lösenordshashning |
 | 🔄 | **Automatisk logg-rotation** vid 10 MB – inget mer fullt SD-kort |
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
 | 📄 | **PDF-manualer** – fullständig användarmanual (22 sidor) + snabbstartguide (11 sidor) |
@@ -123,11 +124,11 @@ All konfiguration sköts via webbgränssnittet:
 
 ### 🔐 Säkerhet
 
-- Lösenord lagras som PBKDF2-SHA256-hash
+- Lösenord lagras som PBKDF2-SHA256-hash (600 000 iterationer)
 - Persistenta sessioner som överlever omstart
 - HttpOnly + SameSite=Strict cookies
 - Brute force-skydd vid inloggning
-- Strikta filrättigheter
+- Strikta filrättigheter (`chmod 0600` på `config.json`)
 
 ### 🌐 Webbgränssnitt
 
@@ -157,9 +158,10 @@ All konfiguration sköts via webbgränssnittet:
 
 ## 📚 Dokumentation
 
-Fullständiga PDF-manual finns tillgängliga i repot:
+PDF-manualer finns tillgängliga i repot:
 
-- 📖 **Användarmanual** (22 sidor) – komplett genomgång för egen installation
+- 📖 **Användarmanual** (22 sidor) – komplett genomgång för egen installation, alla funktioner och felsökning
+- 🚀 **Snabbstartguide** (11 sidor) – för dig som använder den färdiga IMG-filen och vill komma igång snabbt
 
 ---
 
@@ -169,5 +171,5 @@ Nya versioner av POCSAG 2025 och uppdaterade IMG-filer publiceras här på GitHu
 
 ---
 
-*Utvecklad av [Anders Isaksson (SA7BNB)](https://github.com/sa7bnb)*  
-*Copyright © 2026 – SA7BNB*
+*Utvecklad av [Anders Isaksson (SA7BNB)](https://github.com/sa7bnb)*
+*Copyright © 2026 – SA7BNB · v20260425*
