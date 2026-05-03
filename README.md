@@ -1,6 +1,7 @@
 # 📡 POCSAG 2025
 
 > Ett komplett system för att avkoda och hantera POCSAG-meddelanden via RTL-SDR, med webbaserat gränssnitt för övervakning, filtrering, e-postnotifieringar och konfigurationshantering.
+
 Med systemet kan du fånga upp personsökartrafik från bland annat räddningstjänstens utlarmningar, sjukhussökare, jourverksamhet och annan kommunikation som sänds okrypterat över POCSAG.
 Vad du själv behöver göra
 Ta reda på vilken frekvens som används i ditt område — det varierar mellan regioner och operatörer. Svep med en SDR och leta efter den karakteristiska signalen. Sök på "POCSAG sound" på YouTube för att höra hur det låter; det är ett distinkt digitalt "kvitter" som är lätt att känna igen.
