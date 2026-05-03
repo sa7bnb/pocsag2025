@@ -3,7 +3,7 @@
 > Ett komplett system för att avkoda och hantera POCSAG-meddelanden via RTL-SDR, med webbaserat gränssnitt för övervakning, filtrering, e-postnotifieringar och konfigurationshantering.
 
 **Utvecklad av:** [SA7BNB – Anders Isaksson](https://github.com/sa7bnb)
-**Aktuell version:** `v20260425`
+**Aktuell version:** `v20260503`
 
 ---
 
