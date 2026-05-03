@@ -25,7 +25,7 @@ När du matat in frekvensen sköter systemet resten.
 | 🔐 | **Säkerhetshärdning** – persistenta sessioner, HttpOnly + SameSite-cookies, starkare lösenordshashning |
 | 🔄 | **Automatisk logg-rotation** vid 10 MB – inget mer fullt SD-kort |
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
-| 🗺️ | **Klickbar OpenStreetMap och Street View för platsvisualisering direkt från meddelanden** |
+| 🗺️ | **Klickbar OpenStreetMap och Street View för platsvisualisering direkt från meddelanden (epost)** |
 | 🐕 | **Fix för att övervaka om RTL-SDR-stickan svarar (watchdog)** |
 | 📥 | **Ladda ner felsökningslogg för support och diagnostik** |
 | 🛡️ | **Säkerhetsuppdatering: skydd mot Copyfail-attacker** |
