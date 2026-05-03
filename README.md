@@ -25,6 +25,7 @@ När du matat in frekvensen sköter systemet resten.
 | 🔐 | **Säkerhetshärdning** – persistenta sessioner, HttpOnly + SameSite-cookies, starkare lösenordshashning |
 | 🔄 | **Automatisk logg-rotation** vid 10 MB – inget mer fullt SD-kort |
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
+| 🗺️ | **Klickbar OpenStreetMap och Street View för platsvisualisering direkt från meddelanden** |
 | 🐕 | **Fix för att övervaka om RTL-SDR-stickan svarar (watchdog)** |
 | 📥 | **Ladda ner felsökningslogg för support och diagnostik** |
 | 🛡️ | **Säkerhetsuppdatering: skydd mot Copyfail-attacker** |
@@ -170,4 +171,4 @@ Nya versioner av POCSAG 2025 och uppdaterade IMG-filer publiceras här på GitHu
 ---
 
 *Utvecklad av [Anders Isaksson (SA7BNB)](https://github.com/sa7bnb)*
-*Copyright © 2026 – SA7BNB · v20260425*
+*Copyright © 2026 – SA7BNB · v20260503*
