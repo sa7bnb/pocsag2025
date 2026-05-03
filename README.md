@@ -9,7 +9,7 @@
 
 ## ✨ Nyheter – 20260503
 
-| # | Nyhet |
+| # | Nyhet under 2026|
 |---|---|
 | 🎨 | Moderniserat webbgränssnitt med responsiv design och mörk headerstil |
 | 🎯 | **Alpha-läge** – valbart filter som skippar rena tonpagningar utan text |
