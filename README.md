@@ -7,7 +7,7 @@
 
 ---
 
-## ✨ Nyheter – 20260425
+## ✨ Nyheter – 20260503
 
 | # | Nyhet |
 |---|---|
@@ -20,6 +20,8 @@
 | 🔐 | **Säkerhetshärdning** – persistenta sessioner, HttpOnly + SameSite-cookies, starkare lösenordshashning |
 | 🔄 | **Automatisk logg-rotation** vid 10 MB – inget mer fullt SD-kort |
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
+| 🐕 | **Fix för att övervaka om RTL-SDR-stickan svarar (watchdog)** |
+| 📥 | **Ladda ner felsökningslogg för support och diagnostik** |
 
 ---
 
