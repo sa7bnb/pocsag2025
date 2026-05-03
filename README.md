@@ -22,6 +22,7 @@
 | ⚙️ | **Ren avstängning** av subprocesser vid systemctl stop |
 | 🐕 | **Fix för att övervaka om RTL-SDR-stickan svarar (watchdog)** |
 | 📥 | **Ladda ner felsökningslogg för support och diagnostik** |
+| 🛡️ | **Säkerhetsuppdatering mot Copyfail** |
 
 ---
 
