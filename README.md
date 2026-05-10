@@ -8,11 +8,11 @@ Ta reda på vilken frekvens som används i ditt område — det varierar mellan 
 När du matat in frekvensen sköter systemet resten.
 
 **Utvecklad av:** [SA7BNB – Anders Isaksson](https://github.com/sa7bnb)
-**Aktuell version:** `v20260503`
+**Aktuell version:** `v20260510`
 
 ---
 
-## ✨ Nyheter – 20260503
+## ✨ Nyheter – 20260510
 
 | # | Nyhet under 2026|
 |---|---|
@@ -29,6 +29,7 @@ När du matat in frekvensen sköter systemet resten.
 | 🐕 | **Fix för att övervaka om RTL-SDR-stickan svarar (watchdog)** |
 | 📥 | **Ladda ner felsökningslogg för support och diagnostik** |
 | 🛡️ | **Säkerhetsuppdatering: skydd mot Copyfail-attacker** |
+| 🛡️ | **Säkerhetsuppdatering: skydd mot Dirty Frag-attacker** |
 
 ---
 
@@ -171,4 +172,4 @@ Nya versioner av POCSAG 2025 och uppdaterade IMG-filer publiceras här på GitHu
 ---
 
 *Utvecklad av [Anders Isaksson (SA7BNB)](https://github.com/sa7bnb)*
-*Copyright © 2026 – SA7BNB · v20260503*
+*Copyright © 2026 – SA7BNB · v20260510*
