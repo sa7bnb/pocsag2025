@@ -44,7 +44,7 @@ En färdig SD-kortsimage för **Raspberry Pi 4** med **RTL-SDR v3/v4** finns til
 - 🔄 **Unattended-upgrades** – automatiska säkerhetsuppdateringar
 - 🔁 **Automatisk omstart** om tjänsten hänger sig eller kraschar
 
-> 📥 **[Ladda ner image från Google Drive](https://drive.google.com/file/d/1CCzfj3XzY51CeRsnqUmATPnUP26E-m90/view?usp=drive_link)**
+> 📥 **[Ladda ner image från Google Drive](https://drive.google.com/file/d/16rF9big4ik2VF7x_bOPXrtQPAnv0W5wh/view?usp=sharing)**
 
 Skriv imagen till ett SD-kort med **Raspberry Pi Imager** eller **Balena Etcher**, sätt i kortet och starta Pi:n. Surfa sedan till `http://<DIN-IP-ADRESS>:5000/` och logga in.
 
